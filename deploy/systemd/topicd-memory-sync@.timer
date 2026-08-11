@@ -1,0 +1,13 @@
+[Unit]
+Description=agentport memory sync timer — topic %i
+After=network-online.target
+
+[Timer]
+# Run daily at 02:00 local time. RandomizedDelaySec staggers the start if
+# multiple topics are enabled so they don't all hit ~/.claude/projects at once.
+OnCalendar=*-*-* 02:00:00
+RandomizedDelaySec=120
+Persistent=true
+
+[Install]
+WantedBy=timers.target

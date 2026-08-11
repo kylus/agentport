@@ -1,0 +1,17 @@
+[Unit]
+Description=agentport memory sync — session digest for topic %i
+Documentation=https://github.com/kylus/agentport
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/agentport
+Environment=PATH=%h/.local/bin:%h/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Extract new topic-relevant content from Claude Code sessions, commit a digest
+# to sources/sessions/, then notify the live topic agent (tmux send-keys) so it ingests
+# the digest and updates memory automatically.
+ExecStart=%h/projects/agentport/tools/sync-session-memory.sh %i
+
+StandardOutput=journal
+StandardError=journal

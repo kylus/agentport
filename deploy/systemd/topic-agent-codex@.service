@@ -1,0 +1,18 @@
+[Unit]
+Description=agentport Codex topic agent (%i)
+Documentation=https://github.com/kylus/agentport
+After=network-online.target
+Wants=network-online.target
+Conflicts=topic-agent@%i.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/agentport
+Environment=PATH=%h/.npm-global/bin:%h/.local/bin:%h/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=%h/projects/agentport/tools/run-codex-topic.py serve %i
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target

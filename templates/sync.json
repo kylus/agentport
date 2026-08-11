@@ -1,0 +1,15 @@
+{
+  "_comment": "Per-topic sync 設定。your scaffold step 會把這份模板放到 topic-<name>/sync.json，兩個欄位都是選用的——留空即為停用該功能。",
+  "session_digest": {
+    "_comment": "core/sync/session_digest.py 用這些 regex fragment（OR-joined、不分大小寫）從 Claude Code session 紀錄裡撈 topic 相關片段。空陣列 = 這個 topic 不做 session digest。範例（infra/網管 topic）：[\"pve\", \"proxmox\", \"terraform\", \"fortigate\", \"vlan\", \"192\\\\.168\\\\.\"]",
+    "keywords": []
+  },
+  "_repo_sync_example": [
+    {
+      "name": "my-repo",
+      "url": "https://${GITHUB_TOKEN}@github.com/<owner>/<repo>.git",
+      "files": ["README.md", "docs/topology.md"]
+    }
+  ],
+  "repo_sync": []
+}
