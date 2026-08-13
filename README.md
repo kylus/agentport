@@ -19,24 +19,42 @@ and exposes a send tool), so the agent does not know or care which one it is
 attached to.
 
 **Memory writes go through approval.** An agent cannot silently rewrite what it
-believes. `propose-memory-update` produces a diff; `approve-proposal` is where a
-human accepts or rejects it. Reads are unrestricted; writes are gated.
+believes. `propose-memory-update` creates a proposal; `approve-proposal` is
+where a human accepts or rejects it, and only then does anything reach memory.
+Reads are unrestricted; writes are gated. A sha handshake between review and
+approval means "approve what I just read" is not the same command as "approve
+whatever is in that file now" — see **[docs/approval-model.md](docs/approval-model.md)**
+for the design, the four defences, and the one piece you must supply yourself.
 
 **Memory syncs on a timer.** Session transcripts are distilled and repo files
 snapshotted into git-versioned memory, so "what the agent knows" has a history
 you can read and revert.
 
+## Getting a topic running
+
+```bash
+tools/create-topic.sh <name>              # scaffolds ~/workspace/topic-<name>
+tools/provision-discord-app.sh <dir>      # walks the Discord app creation flow
+# fill in bot.env, then start it with your launcher
+```
+
+`create-topic.sh` is idempotent: it creates the memory sections, `pending/`,
+`sources/`, the skill symlinks and a git repo (approval commits into it), and
+will not overwrite an existing `bot.env`.
+
 ## What you bring yourself
 
-This repo is deliberately narrow. It assumes you already have:
+This repo is deliberately narrow. It does not include:
 
-- a topic directory containing a `bot.env` and whatever config your agent reads
-- a launcher that starts the agent (systemd units for both providers are in
-  `deploy/systemd/` as a starting point)
-- your own ingest, if you want the agent to read from external sources
-
-There is no scaffolding command and no ingest layer here. Those were part of a
-different codebase and are not included.
+- **a launcher.** systemd units for both providers are in `deploy/systemd/` as
+  a starting point, but wiring them up is yours.
+- **an ingest layer.** `core/sync/repo_file_sync.py` pulls files from git
+  repos; anything else (issue trackers, docs, wikis) you write yourself.
+- **the role hook that makes approval a control rather than a convention.**
+  `proposal.py` deliberately does not check roles — it assumes a `PreToolUse`
+  hook has already blocked non-owners. Without that hook, anyone with a shell
+  can approve. The contract it must satisfy is in
+  [docs/approval-model.md](docs/approval-model.md#what-you-must-provide).
 
 ## Layout
 
