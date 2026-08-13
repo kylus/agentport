@@ -164,6 +164,18 @@ def cmd_reject(a):
     print(f"commit: {sh('git', 'rev-parse', '--short', 'HEAD')}")
 
 
+def require_topic_dir():
+    """兩支腳本都必須在 topic 目錄裡執行（要有 pending/ 與 memory/）。
+
+    少了這一段，從別的地方跑會得到 FileNotFoundError: 'pending'——
+    對第一次用的人完全沒有指向性。
+    """
+    missing = [d for d in ("pending", "memory") if not os.path.isdir(d)]
+    if missing:
+        die(f"必須在 topic 目錄裡執行（缺少 {', '.join(d + '/' for d in missing)}）。"
+            f"目前在 {os.getcwd()}；用 tools/create-topic.sh 建立一個。")
+
+
 def main():
     ap = argparse.ArgumentParser(prog="proposal.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -184,6 +196,7 @@ def main():
     s.add_argument("--reason", required=True)
     s.set_defaults(f=cmd_reject)
     a = ap.parse_args()
+    require_topic_dir()
     a.f(a)
 
 

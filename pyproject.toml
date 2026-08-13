@@ -1,3 +1,24 @@
+[project]
+name = "agentport"
+version = "0.1.0"
+description = "Make a long-lived agent portable across model providers and chat channels, with human-gated memory writes."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+dependencies = [
+    "requests>=2.31",   # tools/run-codex-topic.py, tools/codex-discord-poc.py
+]
+
+[project.urls]
+Homepage = "https://github.com/kylus/agentport"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["core"]
+
 [tool.ruff]
 target-version = "py311"
 
