@@ -9,6 +9,7 @@ Claude provider is stopped.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import fcntl
 import json
 import os
@@ -28,7 +29,6 @@ from typing import Any, TextIO
 from urllib.parse import quote
 
 import requests
-
 
 DISCORD_API = "https://discord.com/api/v10"
 HEALTH_MAX_AGE = 20.0
@@ -187,7 +187,8 @@ class AppServer:
                     self._messages.put(json.loads(line))
                 except json.JSONDecodeError as exc:
                     self._messages.put(AgentError(f"invalid app-server JSON: {exc}"))
-        except BaseException as exc:
+        # 讀取執行緒不能安靜地死掉——任何例外都轉交主執行緒的佇列處理
+        except BaseException as exc:  # noqa: BLE001
             self._messages.put(exc)
 
     @staticmethod
@@ -653,10 +654,8 @@ class TopicAgent:
             f"handled {channel.id}/{message['id']} -> {','.join(reply_ids)}",
             flush=True,
         )
-        try:
+        with contextlib.suppress(requests.RequestException):
             self.discord.unreact(channel.id, message["id"], "👀")
-        except requests.RequestException:
-            pass
 
     def serve(self) -> None:
         self.acquire_lock()
@@ -692,10 +691,8 @@ class TopicAgent:
     def close(self) -> None:
         if self.app is not None:
             self.app.close()
-        try:
+        with contextlib.suppress(OSError):
             self.write_health("stopped")
-        except OSError:
-            pass
         if self.lock_file is not None:
             self.lock_file.close()
 
@@ -808,12 +805,10 @@ def command_self_test(topic: str, timeout: float) -> int:
             "Reply with exactly CODEX_PROVIDER_RESUME_OK. Do not use tools.",
             timeout=timeout,
         )
-        try:
+        with contextlib.suppress(RpcError):
             second.request(
                 "thread/archive", {"threadId": resumed_thread}, timeout=30
             )
-        except RpcError:
-            pass
         second.close()
     result = {
         "threadId": first_thread,

@@ -16,10 +16,9 @@ Usage:
 """
 
 import json
-import os
+import pathlib
 import re
 import sys
-import pathlib
 from datetime import datetime, timezone
 
 
@@ -55,7 +54,7 @@ def parse_ts(ts_str: str) -> datetime | None:
     if not ts_str:
         return None
     try:
-        return datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
+        return datetime.fromisoformat(ts_str)
     except ValueError:
         return None
 
@@ -64,8 +63,8 @@ def process_session(fpath: pathlib.Path, since: datetime, keywords: 're.Pattern'
     hits = []
     try:
         with open(fpath, encoding='utf-8', errors='replace') as f:
-            for line in f:
-                line = line.strip()
+            for raw in f:
+                line = raw.strip()
                 if not line:
                     continue
                 try:
@@ -106,12 +105,13 @@ def main() -> int:
 
     try:
         state = json.loads(ingest_state_file.read_text())
-    except Exception:
+    except (OSError, json.JSONDecodeError):
+        # 檔案不存在或內容損毀都視為「從頭開始」；其他例外應該往上拋
         state = {}
 
     last_sync_str = state.get('last_session_sync')
     if last_sync_str:
-        last_sync = datetime.fromisoformat(last_sync_str.replace('Z', '+00:00'))
+        last_sync = datetime.fromisoformat(last_sync_str)
     else:
         # First run: look back 30 days
         from datetime import timedelta

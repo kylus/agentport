@@ -25,10 +25,10 @@ Usage:
 
 import json
 import os
+import pathlib
 import shutil
 import subprocess
 import sys
-import pathlib
 from datetime import datetime, timezone
 
 CACHE_ROOT = pathlib.Path.home() / ".claude" / "cache" / "repo-sync"
@@ -126,7 +126,8 @@ def main():
 
     # Commit to topic repo
     subprocess.run(["git", "add", "sources/"], cwd=topic_dir, check=True)
-    result = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=topic_dir)
+    # 這裡的 returncode 就是訊號本身（0=無差異，1=有差異），不是錯誤
+    result = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=topic_dir, check=False)
     if result.returncode != 0:
         subprocess.run(
             ["git", "commit", "-m", f"sync: repo file snapshot {date_str}"],

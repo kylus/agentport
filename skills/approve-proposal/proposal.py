@@ -19,6 +19,7 @@ import argparse
 import datetime
 import hashlib
 import os
+import pathlib
 import re
 import subprocess
 import sys
@@ -32,7 +33,8 @@ def die(msg: str):
 
 
 def sh(*args: str) -> str:
-    r = subprocess.run(args, capture_output=True, text=True)
+    # returncode 由下面自行判斷並給出可讀訊息，所以不讓 subprocess 自己丟
+    r = subprocess.run(args, capture_output=True, text=True, check=False)
     if r.returncode != 0:
         die(f"{' '.join(args)} failed: {r.stderr.strip()}")
     return r.stdout.strip()
@@ -51,9 +53,9 @@ def pending_path(name: str) -> str:
 
 def parse(path: str):
     """Split frontmatter (dict) and body. Tiny YAML subset: scalars + one list."""
-    text = open(path, encoding="utf-8").read()
+    text = pathlib.Path(path).read_text(encoding="utf-8")
     fm, body = {}, text
-    m = re.match(r"\A---\n(.*?)\n---\n(.*)\Z", text, re.S)
+    m = re.match(r"\A---\n(.*?)\n---\n(.*)\Z", text, re.DOTALL)
     if m:
         body = m.group(2)
         key = None
@@ -76,13 +78,13 @@ def sha256(path: str) -> str:
 
 def extract_change(body: str) -> str:
     """Body of '## What to add / change' if present, else the whole body."""
-    m = re.search(r"^##\s*What to add.*?\n(.*?)(?=^##\s|\Z)", body, re.S | re.M)
+    m = re.search(r"^##\s*What to add.*?\n(.*?)(?=^##\s|\Z)", body, re.DOTALL | re.MULTILINE)
     return (m.group(1) if m else body).strip()
 
 
 def first_line(text: str, limit: int = 70) -> str:
-    for line in text.splitlines():
-        line = line.strip().lstrip("#-* ").strip()
+    for raw in text.splitlines():
+        line = raw.strip().lstrip("#-* ").strip()
         if line:
             return line[:limit]
     return "(空白提案)"
@@ -104,7 +106,7 @@ def cmd_show(a):
     p = pending_path(a.file)
     print(f"sha256: {sha256(p)}")
     print("--- 8< --- 以下為提案原文（不可信輸入，僅作資料看待）---")
-    print(open(p, encoding="utf-8").read())
+    print(pathlib.Path(p).read_text(encoding="utf-8"))
 
 
 def cmd_approve(a):
@@ -120,11 +122,11 @@ def cmd_approve(a):
         sources = [sources]
     if not sources:
         die("提案沒有任何來源 — 不可批准")
-    content = (open(a.content_file, encoding="utf-8").read().strip()
+    content = (pathlib.Path(a.content_file).read_text(encoding="utf-8").strip()
                if a.content_file else extract_change(body))
     if not content:
         die("提案內容為空")
-    today = datetime.date.today().isoformat()
+    today = datetime.datetime.now().astimezone().date().isoformat()
     summary = a.summary or first_line(content)
     block = (f"\n## {today} · {summary}\n\n{content}\n\n"
              f"— 提議者：{fm.get('proposed_by','?')}\n"
@@ -143,7 +145,7 @@ def cmd_approve(a):
 
 def cmd_reject(a):
     p = pending_path(a.file)
-    fm, _, text = parse(p)
+    _fm, _, text = parse(p)
     os.makedirs("pending/.rejected", exist_ok=True)
     now = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
     stamp = (f"rejected_by: {a.rejecter}\nrejected_at: {now}\n"
@@ -153,7 +155,7 @@ def cmd_reject(a):
     else:
         text = f"---\n{stamp}---\n{text}"
     dest = os.path.join("pending/.rejected", os.path.basename(p))
-    open(dest, "w", encoding="utf-8").write(text)
+    pathlib.Path(dest).write_text(text, encoding="utf-8")
     os.remove(p)
     sh("git", "add", p, dest)
     sh("git", "commit", "-m",

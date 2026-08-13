@@ -20,6 +20,7 @@ notification line this script prints.
 import argparse
 import datetime
 import os
+import pathlib
 import re
 import subprocess
 import sys
@@ -33,7 +34,8 @@ def die(msg: str):
 
 
 def sh(*args: str) -> str:
-    r = subprocess.run(args, capture_output=True, text=True)
+    # returncode 由下面自行判斷並給出可讀訊息，所以不讓 subprocess 自己丟
+    r = subprocess.run(args, capture_output=True, text=True, check=False)
     if r.returncode != 0:
         die(f"{' '.join(args)} failed: {r.stderr.strip()}")
     return r.stdout.strip()
@@ -60,7 +62,7 @@ def main():
         die(f"draft 必須在 pending/ 底下: {a.draft!r}")
     if not os.path.isfile(draft):
         die(f"draft 不存在: {draft}")
-    content = open(draft, encoding="utf-8").read().strip()
+    content = pathlib.Path(draft).read_text(encoding="utf-8").strip()
     if not content:
         die("draft 內容為空")
     for u in a.source:
@@ -82,14 +84,15 @@ def main():
         body += f"\n## Why\n\n{a.why}\n"
     if a.conflicts:
         body += f"\n## Conflicts (if any)\n\n{a.conflicts}\n"
-    open(path, "w", encoding="utf-8").write(body)
+    pathlib.Path(path).write_text(body, encoding="utf-8")
     os.remove(draft)
 
-    summary = next((l.strip().lstrip('#-* ')[:60]
-                    for l in content.splitlines() if l.strip()), fname)
+    summary = next((ln.strip().lstrip('#-* ')[:60]
+                    for ln in content.splitlines() if ln.strip()), fname)
     sh("git", "add", path)
     # draft may or may not have been staged; stage its deletion if tracked
-    subprocess.run(["git", "add", draft], capture_output=True)
+    # draft 不一定被 track，add 失敗是可接受的
+    subprocess.run(["git", "add", draft], capture_output=True, check=False)
     sh("git", "commit", "-m", f"propose: {summary}")
     sha = sh("git", "rev-parse", "--short", "HEAD")
 

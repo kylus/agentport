@@ -1,0 +1,26 @@
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+# 明確列出啟用的規則，不依賴 ruff 的預設值——預設會隨版本變動，
+# 那會讓 CI 在沒有人改動程式碼的情況下突然變紅。
+#
+# 這份清單目前是「已經全部通過」的集合。刻意不含 B / UP / 完整 PL：
+# 那些會要求一次大規模重構，不是這個閘門該做的事。要收緊隨時可以加，
+# 但加的時候要連同修正一起進來，不要留一個紅的 CI 在那裡。
+select = [
+    "E", "F", "W",   # pycodestyle / pyflakes
+    "I",             # import 排序
+    "SIM",           # 可簡化的寫法（含檔案句柄未用 context manager）
+    "BLE",           # 過寬的 except
+    "DTZ",           # 沒有時區的 datetime
+    "FURB",
+    "PLW",           # pylint warnings（含 subprocess.run 未寫 check=）
+    "RUF",
+]
+ignore = [
+    "E501",              # 行長交給人判斷，不機械攔截
+    # 這個 codebase 的註解是中文，全形標點會被判定成「易混淆字元」。
+    # 那是雙語專案的必然結果，不是缺陷。
+    "RUF001", "RUF002", "RUF003",
+]

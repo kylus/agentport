@@ -18,7 +18,6 @@ from typing import Any
 
 import requests
 
-
 API = "https://discord.com/api/v10"
 
 

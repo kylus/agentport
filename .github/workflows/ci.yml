@@ -12,15 +12,15 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
       - name: Lint
         run: |
-          pip install ruff
+          pip install 'ruff==0.16.2'   # 釘住版本：ruff 升級會帶新規則，CI 不該在沒人改碼時變紅
           ruff check .
 
       - name: Shell scripts
