@@ -1,0 +1,27 @@
+# Run one topic agent inside herdr, supervised by systemd.
+#
+#   systemctl --user enable --now topic-agent-herdr@<topic>
+#
+# Unlike the tmux-based units, the agent's state is queryable while it runs:
+#   herdr agent get <topic>
+#   herdr agent wait <topic> --until blocked
+#
+# TOPIC_ROOT and PROVIDER can be overridden per instance with a drop-in:
+#   systemctl --user edit topic-agent-herdr@<topic>
+[Unit]
+Description=agentport topic agent (%i) under herdr
+After=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=PATH=%h/.local/bin:%h/bin:/usr/local/bin:/usr/bin:/bin
+Environment=TOPIC_ROOT=%h/workspace
+Environment=PROVIDER=claude
+# The launcher is idempotent: if the agent is already up it reports and exits 0,
+# so a restart never produces two agents racing on one topic's git history.
+ExecStart=/bin/sh -c '%h/projects/agentport/tools/run-topic-herdr.sh "$TOPIC_ROOT/topic-%i" --provider "$PROVIDER"'
+ExecStop=/bin/sh -c 'herdr agent get %i >/dev/null 2>&1 && herdr pane close "$(herdr agent get %i | python3 -c "import json,sys;print((json.load(sys.stdin).get(\"result\") or {}).get(\"agent\",{}).get(\"pane_id\",\"\"))")" || true'
+
+[Install]
+WantedBy=default.target

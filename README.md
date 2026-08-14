@@ -47,7 +47,11 @@ will not overwrite an existing `bot.env`.
 This repo is deliberately narrow. It does not include:
 
 - **a launcher.** systemd units for both providers are in `deploy/systemd/` as
-  a starting point, but wiring them up is yours.
+  a starting point, but wiring them up is yours. If you run more than one topic
+  agent, `tools/run-topic-herdr.sh` runs them under
+  [herdr](https://herdr.dev) so their state (`idle` / `working` / `blocked` /
+  `done`) is queryable instead of needing you to read panes — see
+  [docs/herdr.md](docs/herdr.md). Optional; tmux still works.
 - **an ingest layer.** `core/sync/repo_file_sync.py` pulls files from git
   repos; anything else (issue trackers, docs, wikis) you write yourself.
 - **the role hook that makes approval a control rather than a convention.**
