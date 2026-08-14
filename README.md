@@ -54,11 +54,12 @@ This repo is deliberately narrow. It does not include:
   [docs/herdr.md](docs/herdr.md). Optional; tmux still works.
 - **an ingest layer.** `core/sync/repo_file_sync.py` pulls files from git
   repos; anything else (issue trackers, docs, wikis) you write yourself.
-- **the role hook that makes approval a control rather than a convention.**
-  `proposal.py` deliberately does not check roles — it assumes a `PreToolUse`
-  hook has already blocked non-owners. Without that hook, anyone with a shell
-  can approve. The contract it must satisfy is in
-  [docs/approval-model.md](docs/approval-model.md#what-you-must-provide).
+- **the wiring for the role hook.** `hooks/role_gate.py` is the hook that makes
+  approval a control rather than a convention — `proposal.py` deliberately does
+  not check roles and assumes something already blocked non-owners. The hook
+  ships; installing it and deciding where the role comes from is yours, because
+  that depends on how you launch agents. Until it is firing, anyone with a
+  shell can approve. See [hooks/README.md](hooks/README.md).
 
 ## Layout
 
@@ -68,6 +69,9 @@ tools/      provider runtime (Codex), provider switch, Discord provisioning,
 channels/   LINE channel as a stdio MCP server
 core/sync/  session distillation + repo file snapshot into memory
 skills/     propose / approve / read memory
+hooks/      the PreToolUse role gate that makes approval enforceable
+tests/      the gate's deny rules, run as a subprocess the way Claude Code
+            runs them
 deploy/     systemd units for both providers and the memory sync timer
 docs/       Codex app-server protocol notes, plugin update SOP
 ```

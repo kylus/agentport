@@ -23,6 +23,11 @@ jobs:
           pip install 'ruff==0.16.2'   # 釘住版本：ruff 升級會帶新規則，CI 不該在沒人改碼時變紅
           ruff check .
 
+      # role_gate.py 是這個 repo 唯一的強制點。它的每一條 deny 都是一個宣稱，
+      # 沒有測試的宣稱在重構後會安靜地消失，而 CI 依然是綠的。
+      - name: Tests
+        run: python -m unittest discover -s tests -v
+
       - name: Shell scripts
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck

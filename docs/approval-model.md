@@ -49,9 +49,10 @@ whitelist.
 `proposal.py` does not check roles. It assumes a `PreToolUse` hook has already
 blocked non-owners from mutating `pending/` and `memory/`.
 
-**That hook is not included in this repo** (see [What you must
-provide](#what-you-must-provide)). Without it, the scripts are a workflow, not
-a control — anyone who can reach a shell can call `proposal.py approve`.
+That hook is `hooks/role_gate.py` — a reference implementation, and the piece
+that makes the rest a control rather than a workflow. **It is not wired up for
+you**: until it is installed and firing, anyone who can reach a shell can call
+`proposal.py approve`. See [What you must provide](#what-you-must-provide).
 
 ### 3. A sha handshake closes the review window
 
@@ -95,11 +96,12 @@ content.
 
 ## What you must provide
 
-This repo has the proposal and approval halves. It does **not** ship the role
-hook they assume, because that was part of a different codebase.
+The proposal and approval halves are here. The `PreToolUse` hook they assume
+is here too — `hooks/role_gate.py` — but **installing it is yours**, because
+where the role comes from depends on how you launch agents. Setup and its
+limits: [hooks/README.md](../hooks/README.md).
 
-To make this a control rather than a convention, supply a `PreToolUse` hook
-that:
+The contract, if you would rather write your own:
 
 - allows contributors exactly one write shape: `python3
   .../propose-memory-update/propose.py` with the flags above, writing only
@@ -109,9 +111,23 @@ that:
 - denies contributors `proposal.py approve` and `proposal.py reject` outright
 - allows owners everything
 
+Two things the reference implementation gets right that are easy to miss:
+
+**The role must come from the process environment, never from the command.**
+If a contributor can influence how their own role is determined, there is no
+gate. `role_gate.py` reads `AGENTPORT_ROLE` from its own environment, so
+`AGENTPORT_ROLE=owner python3 …` sets a variable for the command and changes
+nothing about the decision.
+
+**An unset role must fail closed.** Missing, empty or unreadable resolves to
+`contributor`. A gate that opens when misconfigured is worse than no gate,
+because it looks installed.
+
 Contributor shells must also be prevented from chaining commands — the
 single-line invocation requirement in `propose.py` exists so a hook can match
-the whole command, not a prefix of it.
+the whole command, not a prefix of it. The reference hook refuses `;`, `&`,
+`|`, `<`, `>`, backticks, `$(` and newlines outright, and refuses anything
+`shlex` cannot parse.
 
 ## Failure modes worth knowing
 

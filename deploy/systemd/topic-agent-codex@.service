@@ -9,6 +9,13 @@ Conflicts=topic-agent@%i.service
 Type=simple
 WorkingDirectory=%h/projects/agentport
 Environment=PATH=%h/.npm-global/bin:%h/.local/bin:%h/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# The role gate reads this from the process environment — that is the whole
+# reason it cannot be talked into changing. owner|contributor; see hooks/README.md.
+# owner is correct HERE because this unit's Discord router drops every message
+# that is not from OWNER_DISCORD_USER_ID. Serving anyone else from this unit
+# without changing this line hands them approval rights.
+Environment=AGENTPORT_ROLE=owner
+Environment=AGENTPORT_PROPOSE_SCRIPT=%h/projects/agentport/skills/propose-memory-update/propose.py
 ExecStart=%h/projects/agentport/tools/run-codex-topic.py serve %i
 Restart=on-failure
 RestartSec=5
