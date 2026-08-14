@@ -15,9 +15,9 @@ import sys
 import tempfile
 import unittest
 
-REPO = pathlib.Path(__file__).resolve().parent.parent
+from support import PROPOSE, REPO
+
 HOOK = REPO / "hooks" / "role_gate.py"
-PROPOSE = REPO / "skills" / "propose-memory-update" / "propose.py"
 
 
 def run_hook(tool, tool_input, cwd, role="contributor", env_extra=None):
