@@ -67,15 +67,46 @@ server's environment — not `topic-agent-herdr@.service`'s. Putting
 agent, which then fails closed to `contributor` and blocks the owner. Export it
 before starting the server, or use `AGENTPORT_ROLE_FILE`.
 
-Verify it is live before trusting it:
+## Is it on?
+
+A hook that is installed but not firing looks exactly like one that is
+working. Nothing breaks, nothing is logged, and every write is allowed.
+That is the failure mode this section exists for.
 
 ```bash
-printf '{"hook_event_name":"PreToolUse","tool_name":"Write","tool_input":{"file_path":"memory/decisions.md"},"cwd":"'"$PWD"'"}' \
-  | AGENTPORT_ROLE=contributor python3 hooks/role_gate.py
+python3 hooks/role_gate.py --self-test
 ```
 
-That must print a `deny`. A hook that is installed but not firing looks
-exactly like a hook that is working.
+Run it from the topic directory. It reports three things and exits non-zero
+if any of them is wrong:
+
+- **role** — what it resolves to, and where that came from
+- **wiring** — which settings files reference it, whether the matcher is `*`,
+  whether the path exists and is *this* file rather than a stale copy
+- **behaviour** — ten scenarios through the same `decide()` the hook uses, so
+  the self-test cannot drift from the rules it is checking
+
+Then it prints **liveness**: when the gate last actually fired. The hook
+records a timestamp on every invocation, so this is the one line that
+distinguishes "configured" from "running". Everything above it is inference;
+this is evidence.
+
+If liveness says never, prove it end to end from inside the agent — ask it to
+run:
+
+```
+echo AGENTPORT_GATE_CANARY
+```
+
+That string is denied in any argument, for owners as well as contributors,
+purely so it can be used this way. If the command executes, the gate is not
+in the agent's loop, whatever the settings file says.
+
+Two limits worth knowing: recording liveness is best-effort, so an unwritable
+state directory under-reports as "never fired" rather than breaking the gate —
+it fails toward looking broken, not toward looking fine. And the wiring check
+only reads the usual settings files; Claude Code decides what it actually
+loads, which is why liveness is the thing to trust.
 
 ## Why the role comes from the environment
 

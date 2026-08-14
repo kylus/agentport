@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 from support import PROPOSE, REPO
@@ -20,14 +21,29 @@ from support import PROPOSE, REPO
 HOOK = REPO / "hooks" / "role_gate.py"
 
 
-def run_hook(tool, tool_input, cwd, role="contributor", env_extra=None):
-    """Returns (decision, reason). decision is None when the hook stays silent."""
-    env = {**os.environ, "AGENTPORT_ROLE": role, **(env_extra or {})}
+_STATE = tempfile.mkdtemp(prefix="agentport-state-")
+
+
+def tearDownModule():
+    """The beacon is real state. Keep the suite out of the developer's ~."""
+    shutil.rmtree(_STATE, ignore_errors=True)
+
+
+def hook_env(role="contributor", env_extra=None):
+    env = {**os.environ, "XDG_STATE_HOME": _STATE}
     env.pop("AGENTPORT_ROLE_FILE", None)
+    env.pop("AGENTPORT_PROPOSE_SCRIPT", None)
     if role is None:
         env.pop("AGENTPORT_ROLE", None)
-    for k, v in (env_extra or {}).items():
-        env[k] = v
+    else:
+        env["AGENTPORT_ROLE"] = role
+    env.update(env_extra or {})
+    return env
+
+
+def run_hook(tool, tool_input, cwd, role="contributor", env_extra=None):
+    """Returns (decision, reason). decision is None when the hook stays silent."""
+    env = hook_env(role, env_extra)
     payload = json.dumps({"hook_event_name": "PreToolUse", "tool_name": tool,
                           "tool_input": tool_input, "cwd": str(cwd)})
     r = subprocess.run([sys.executable, str(HOOK)], input=payload,
@@ -300,11 +316,136 @@ class TestUnknownTools(TopicDir):
                 self.assertEqual(decision, "deny")
 
     def test_unparseable_payload_is_denied(self):
-        env = {**os.environ, "AGENTPORT_ROLE": "contributor"}
         r = subprocess.run([sys.executable, str(HOOK)], input="not json",
-                           capture_output=True, text=True, env=env, check=False)
+                           capture_output=True, text=True, env=hook_env(), check=False)
         self.assertEqual(r.returncode, 0)
         self.assertEqual(json.loads(r.stdout)["hookSpecificOutput"]["permissionDecision"], "deny")
+
+
+class TestCanary(TopicDir):
+    """The canary exists to answer "is this thing on?" from inside the agent."""
+
+    def test_denied_for_both_roles(self):
+        for role in ("owner", "contributor"):
+            with self.subTest(role=role):
+                decision, reason = run_hook(
+                    "Bash", {"command": "echo AGENTPORT_GATE_CANARY"}, self.dir, role=role)
+                self.assertEqual(decision, "deny")
+                self.assertIn("installed and firing", reason)
+                self.assertIn(f"role={role}", reason)
+
+    def test_found_in_any_argument_not_just_the_command(self):
+        decision, _ = run_hook("Write", {"file_path": "AGENTPORT_GATE_CANARY.md"},
+                               self.dir, role="owner")
+        self.assertEqual(decision, "deny")
+
+    def test_an_ordinary_command_is_not_a_canary(self):
+        decision, _ = run_hook("Bash", {"command": "echo hello"}, self.dir, role="owner")
+        self.assertIsNone(decision)
+
+
+class TestBeacon(TopicDir):
+    """Liveness has to be recorded by the hook itself; nothing else can see it fire."""
+
+    def setUp(self):
+        super().setUp()
+        self.state = pathlib.Path(tempfile.mkdtemp(prefix="agentport-beacon-"))
+        self.addCleanup(shutil.rmtree, self.state, ignore_errors=True)
+        self.beacon = self.state / "agentport" / "gate-last-fired"
+
+    def fire(self, role="owner", state=None):
+        return run_hook("Read", {"file_path": "memory/decisions.md"}, self.dir,
+                        role=role, env_extra={"XDG_STATE_HOME": str(state or self.state)})
+
+    def test_written_on_an_allowed_call(self):
+        self.assertFalse(self.beacon.exists())
+        self.fire()
+        self.assertTrue(self.beacon.exists())
+        self.assertLess(time.time() - float(self.beacon.read_text().strip()), 30)
+
+    def test_written_on_a_denied_call(self):
+        run_hook("Write", {"file_path": "memory/decisions.md"}, self.dir,
+                 env_extra={"XDG_STATE_HOME": str(self.state)})
+        self.assertTrue(self.beacon.exists(), "a denied call is still a call")
+
+    def test_an_unwritable_beacon_does_not_break_the_gate(self):
+        """Failing to record liveness must never stop the gate deciding —
+        that would hang the agent. It under-reports instead, which is the
+        safe direction: it looks broken rather than looking fine."""
+        blocker = self.state / "blocked"
+        blocker.write_text("not a directory\n")
+        decision, _ = run_hook("Write", {"file_path": "memory/decisions.md"}, self.dir,
+                               env_extra={"XDG_STATE_HOME": str(blocker)})
+        self.assertEqual(decision, "deny")
+
+
+class TestSelfTest(TopicDir):
+    def run_self_test(self, cwd, env_extra=None):
+        return subprocess.run([sys.executable, str(HOOK), "--self-test"], cwd=str(cwd),
+                              capture_output=True, text=True,
+                              env=hook_env("owner", env_extra), check=False)
+
+    def wired(self, matcher="*", command=None):
+        """A topic dir whose .claude/settings.json wires this hook in."""
+        home = pathlib.Path(tempfile.mkdtemp(prefix="agentport-home-"))
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        (self.dir / ".claude").mkdir(exist_ok=True)
+        (self.dir / ".claude" / "settings.json").write_text(json.dumps({
+            "hooks": {"PreToolUse": [{"matcher": matcher, "hooks": [
+                {"type": "command", "command": command or f"python3 {HOOK}"}]}]}}))
+        return {"HOME": str(home)}
+
+    def test_all_rules_hold(self):
+        r = self.run_self_test(self.dir, self.wired())
+        self.assertIn("✓ contributor may not write memory/", r.stdout)
+        self.assertNotIn("✗", r.stdout)
+        self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_missing_wiring_is_a_failure(self):
+        home = pathlib.Path(tempfile.mkdtemp(prefix="agentport-home-"))
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        r = self.run_self_test(self.dir, {"HOME": str(home)})
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("no PreToolUse entry", r.stdout)
+
+    def test_a_narrow_matcher_is_flagged(self):
+        """matcher: Bash leaves Write free to reach memory/ without a shell."""
+        r = self.run_self_test(self.dir, self.wired(matcher="Bash"))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("matcher is not '*'", r.stdout)
+
+    def test_a_path_that_does_not_exist_is_flagged(self):
+        r = self.run_self_test(self.dir, self.wired(command="python3 /nope/role_gate.py"))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("does not exist", r.stdout)
+
+    def test_a_different_copy_is_flagged(self):
+        other = pathlib.Path(tempfile.mkdtemp(prefix="agentport-copy-"))
+        self.addCleanup(shutil.rmtree, other, ignore_errors=True)
+        shutil.copy(HOOK, other / "role_gate.py")
+        r = self.run_self_test(self.dir, self.wired(command=f"python3 {other}/role_gate.py"))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("different copy", r.stdout)
+
+    def test_liveness_reports_a_recent_firing(self):
+        state = pathlib.Path(tempfile.mkdtemp(prefix="agentport-beacon-"))
+        self.addCleanup(shutil.rmtree, state, ignore_errors=True)
+        run_hook("Read", {"file_path": "x"}, self.dir, role="owner",
+                 env_extra={"XDG_STATE_HOME": str(state)})
+        env = self.wired()
+        env["XDG_STATE_HOME"] = str(state)
+        r = self.run_self_test(self.dir, env)
+        self.assertIn("last fired", r.stdout)
+        self.assertNotIn("never fired", r.stdout)
+
+    def test_liveness_says_never_when_it_has_not_fired(self):
+        state = pathlib.Path(tempfile.mkdtemp(prefix="agentport-beacon-"))
+        self.addCleanup(shutil.rmtree, state, ignore_errors=True)
+        env = self.wired()
+        env["XDG_STATE_HOME"] = str(state)
+        r = self.run_self_test(self.dir, env)
+        self.assertIn("never fired", r.stdout)
+        self.assertIn("AGENTPORT_GATE_CANARY", r.stdout)
 
 
 if __name__ == "__main__":

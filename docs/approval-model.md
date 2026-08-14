@@ -133,6 +133,13 @@ the whole command, not a prefix of it. The reference hook refuses `;`, `&`,
 
 - **No hook, no control.** Stated above; repeated here because it is the one
   that matters.
+- **A hook that is not firing is indistinguishable from one that works.**
+  Nothing breaks and nothing is logged — the writes just go through. This is
+  the failure mode most likely to go unnoticed, because installing it feels
+  like finishing. `role_gate.py --self-test` reports when the gate last
+  actually fired, and the `AGENTPORT_GATE_CANARY` string proves it end to end
+  from inside the agent. Both are described in
+  [hooks/README.md](../hooks/README.md#is-it-on).
 - **The owner is still the weak point.** The model can present a proposal
   persuasively. This design makes memory writes visible and revertible; it does
   not make the human's judgment reliable.

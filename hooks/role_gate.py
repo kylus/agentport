@@ -27,15 +27,27 @@ changes nothing. Never resolve the role from anything the model can type.
 A gate that defaults to "allow everything" when misconfigured is worse than no
 gate, because it looks installed.
 
-Install: see hooks/README.md. Wire it as a PreToolUse hook with an empty
-matcher so it sees every tool call — an allowlist that only runs on some tools
-is not an allowlist.
+Install: see hooks/README.md. Wire it as a `PreToolUse` hook with matcher `*`
+so it sees every tool call — an allowlist that only runs on some tools is not
+an allowlist.
+
+Then check it is actually running, because a hook that is installed but not
+firing looks exactly like one that is working:
+
+    python3 role_gate.py --self-test
+
+That reports the resolved role, the wiring it can find, all the rules run
+through the same `decide()` the hook uses, and — the only real evidence —
+when the gate last fired.
 """
 import json
 import os
 import re
 import shlex
+import shutil
 import sys
+import tempfile
+import time
 
 SECTIONS = {"background", "current_understanding", "decisions",
             "open_questions", "commitments", "people"}
@@ -61,6 +73,10 @@ DRAFT_RE = re.compile(r"^\.draft[A-Za-z0-9_.-]*\.md$")
 # 放寬直譯器名字不會鬆掉什麼——真正被把關的是後面那個腳本路徑。
 PYTHON_RE = re.compile(r"^python(3(\.\d+)?)?$")
 
+# 放進任何一個工具參數裡就會被擋下，兩種角色都一樣。用途只有一個：
+# 從 agent 自己的工具迴圈裡證明這個 hook 真的在線上。
+CANARY = "AGENTPORT_GATE_CANARY"
+
 
 def respond(decision: str | None, reason: str = "") -> None:
     """Emit the hook verdict and exit.
@@ -73,13 +89,37 @@ def respond(decision: str | None, reason: str = "") -> None:
         json.dump({"hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": decision,
-            "permissionDecisionReason": reason,
+            "permissionDecisionReason": f"agentport role gate: {reason}",
         }}, sys.stdout)
     sys.exit(0)
 
 
 def deny(reason: str) -> None:
-    respond("deny", f"agentport role gate: {reason}")
+    respond("deny", reason)
+
+
+def beacon_path() -> str:
+    """證據放在 topic 目錄外面：那是個 git repo，多一個每次工具呼叫都在變的
+    檔案只會變成雜訊，而且草稿之外的東西本來就不該出現在那裡。"""
+    state = os.environ.get("XDG_STATE_HOME") or os.path.join(
+        os.path.expanduser("~"), ".local", "state")
+    return os.path.join(state, "agentport", "gate-last-fired")
+
+
+def touch_beacon() -> None:
+    """每次被呼叫就留一個時間戳——「它到底有沒有在跑」的唯一直接證據。
+
+    盡力而為：寫不進去也絕不讓 hook 失敗（那會把 agent 卡死）。代價是
+    liveness 會低報成「從沒觸發」，那個方向是安全的——看起來壞掉，不會
+    看起來沒事。
+    """
+    try:
+        p = beacon_path()
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(f"{time.time():.0f}\n")
+    except OSError:
+        pass
 
 
 def resolve_role() -> str:
@@ -210,40 +250,196 @@ def check_propose_command(cwd: str, command: str) -> str | None:
     return None
 
 
-def main() -> None:
-    try:
-        event = json.load(sys.stdin)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        # 讀不懂事件就不能宣稱自己在把關，但也不該把 owner 鎖在門外
-        deny("could not parse the hook payload")
-        return
+def decide(event: dict, role: str) -> tuple[str | None, str]:
+    """The whole verdict, as a value. ("deny", reason) or (None, "").
 
-    if resolve_role() == "owner":
-        respond(None)
-
+    Pure on purpose: --self-test runs the same function the hook runs, rather
+    than a second copy of the rules that can drift from it.
+    """
     tool = event.get("tool_name") or ""
     tool_input = event.get("tool_input") or {}
     cwd = event.get("cwd") or os.getcwd()
 
+    # canary 對 owner 也擋。它唯一的用途就是證明這個 hook 真的在迴圈裡，
+    # 沒有人需要真的執行它，所以擋掉不花任何代價。
+    if CANARY in json.dumps(tool_input, ensure_ascii=False):
+        return "deny", (f"{CANARY}: the gate is installed and firing "
+                        f"(role={role}). Nothing was wrong with that command.")
+
+    if role == "owner":
+        return None, ""
     if tool in READ_TOOLS:
-        respond(None)
+        return None, ""
 
     if tool == "Write":
-        name = draft_target(cwd, tool_input.get("file_path") or "")
-        if not name:
-            deny("contributors may only write pending/.draft*.md — "
-                 "memory/ and pending/ proposals are owner-only. "
-                 "Write the draft, then run propose.py.")
-        respond(None)
+        if not draft_target(cwd, tool_input.get("file_path") or ""):
+            return "deny", ("contributors may only write pending/.draft*.md — "
+                            "memory/ and pending/ proposals are owner-only. "
+                            "Write the draft, then run propose.py.")
+        return None, ""
 
     if tool == "Bash":
         reason = check_propose_command(cwd, tool_input.get("command") or "")
-        if reason:
-            deny(reason)
-        respond(None)
+        return ("deny", reason) if reason else (None, "")
 
-    deny(f"{tool or 'this tool'} is not available to contributors; "
-         "the only write path is propose.py")
+    return "deny", (f"{tool or 'this tool'} is not available to contributors; "
+                    "the only write path is propose.py")
+
+
+SETTINGS_CANDIDATES = (
+    ".claude/settings.json",
+    ".claude/settings.local.json",
+    "~/.claude/settings.json",
+)
+
+
+def wiring_report() -> list[str]:
+    """Where this hook appears to be wired in, and whether it looks right.
+
+    Deliberately a hint, not a verdict: Claude Code decides which settings
+    files it loads and in what order, and this only reads the usual ones.
+    The beacon below is the evidence — this is here to explain a "never
+    fired" rather than to prove a "working".
+    """
+    me = os.path.realpath(__file__)
+    lines, found = [], False
+    for cand in SETTINGS_CANDIDATES:
+        path = os.path.expanduser(cand)
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, json.JSONDecodeError) as exc:
+            lines.append(f"  ! {cand}: unreadable ({exc})")
+            continue
+        for entry in (data.get("hooks") or {}).get("PreToolUse") or []:
+            matcher = entry.get("matcher", "")
+            for hook in entry.get("hooks") or []:
+                cmd = hook.get("command", "")
+                if "role_gate" not in cmd:
+                    continue
+                found = True
+                lines.append(f"  · {cand}: matcher={matcher!r}")
+                if matcher not in ("", "*"):
+                    lines.append("    ! matcher is not '*' — the gate will not see "
+                                 "every tool, and Write reaches memory/ without a shell")
+                ref = next((os.path.expanduser(t) for t in shlex.split(cmd)
+                            if "role_gate" in t), "")
+                if ref and not os.path.isfile(ref):
+                    lines.append(f"    ! {ref} does not exist")
+                elif ref and os.path.realpath(ref) != me:
+                    lines.append(f"    ! points at a different copy: {os.path.realpath(ref)}")
+    if not found:
+        lines.append("  ! no PreToolUse entry referencing role_gate in any of: "
+                     + ", ".join(SETTINGS_CANDIDATES))
+    return lines
+
+
+def _scenarios(topic: str, propose: str):
+    legal = (f"python3 {propose} --author U1 --section decisions "
+             f"--draft pending/.draft.md --source https://example.com/a")
+    ev = lambda tool, ti: {"tool_name": tool, "tool_input": ti, "cwd": topic}  # noqa: E731
+    return [
+        ("owner may write memory/", "owner",
+         ev("Write", {"file_path": "memory/decisions.md"}), None),
+        ("owner may approve", "owner",
+         ev("Bash", {"command": "python3 proposal.py approve x.md"}), None),
+        ("contributor may not write memory/", "contributor",
+         ev("Write", {"file_path": "memory/decisions.md"}), "deny"),
+        ("contributor may not forge a proposal", "contributor",
+         ev("Write", {"file_path": "pending/2026-01-01-U1-decisions.md"}), "deny"),
+        ("contributor may write a draft", "contributor",
+         ev("Write", {"file_path": "pending/.draft.md"}), None),
+        ("contributor may not approve", "contributor",
+         ev("Bash", {"command": "python3 proposal.py approve x.md --sha a"}), "deny"),
+        ("contributor may propose", "contributor", ev("Bash", {"command": legal}), None),
+        ("contributor may not chain", "contributor",
+         ev("Bash", {"command": legal + " ; id"}), "deny"),
+        ("contributor gets no other tool", "contributor", ev("WebFetch", {}), "deny"),
+        ("canary is denied for owners too", "owner",
+         ev("Bash", {"command": f"echo {CANARY}"}), "deny"),
+    ]
+
+
+def self_test() -> int:
+    """Answer the question a silently-missing hook makes hard: is this thing on?"""
+    ok = True
+    print("role_gate self-test\n")
+
+    print("role:")
+    src = ("AGENTPORT_ROLE" if os.environ.get("AGENTPORT_ROLE") else
+           "AGENTPORT_ROLE_FILE" if os.environ.get("AGENTPORT_ROLE_FILE") else
+           "nothing set — failing closed")
+    print(f"  {resolve_role()}  (from {src})\n")
+
+    print("wiring (a hint, not proof — see liveness):")
+    for line in wiring_report():
+        print(line)
+        if line.lstrip().startswith("!"):
+            ok = False
+    print()
+
+    print("behaviour:")
+    topic = tempfile.mkdtemp(prefix="agentport-selftest-")
+    try:
+        os.makedirs(os.path.join(topic, "pending"))
+        os.makedirs(os.path.join(topic, "memory"))
+        skills = os.path.join(topic, ".claude", "skills")
+        os.makedirs(skills)
+        real = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
+                            "skills", "propose-memory-update")
+        propose = ".claude/skills/propose-memory-update/propose.py"
+        if os.path.isdir(real):
+            os.symlink(real, os.path.join(skills, "propose-memory-update"))
+        else:
+            print(f"  ! cannot find the skills directory next to {__file__}; "
+                  "propose.py scenarios will be reported as failures")
+            ok = False
+        for name, role, event, want in _scenarios(topic, propose):
+            got, reason = decide(event, role)
+            good = got == want
+            ok = ok and good
+            print(f"  {'✓' if good else '✗'} {name}"
+                  + ("" if good else f"  → expected {want or 'allow'}, got "
+                                     f"{got or 'allow'} ({reason})"))
+    finally:
+        shutil.rmtree(topic, ignore_errors=True)
+    print()
+
+    print("liveness:")
+    try:
+        with open(beacon_path(), encoding="utf-8") as fh:
+            age = time.time() - float(fh.read().strip())
+        print(f"  last fired {age:.0f}s ago  ({beacon_path()})")
+        if age > 3600:
+            print("  ! over an hour — if an agent has run since, the gate is not in its loop")
+    except (OSError, ValueError):
+        print(f"  ! never fired, or the beacon is unwritable ({beacon_path()})")
+        print("    A gate that is installed but not firing looks exactly like one")
+        print("    that is working. Prove it end to end from inside the agent:")
+        print(f"      ask it to run:  echo {CANARY}")
+        print("    That must come back denied. If it runs, the gate is not wired in.")
+
+    print("\n" + ("PASS — the rules hold and the wiring looks right" if ok
+                  else "FAIL — see the ! lines above"))
+    return 0 if ok else 1
+
+
+def main() -> None:
+    if "--self-test" in sys.argv[1:]:
+        sys.exit(self_test())
+
+    try:
+        event = json.load(sys.stdin)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        # 讀不懂事件就不能宣稱自己在把關，但也不該把 owner 鎖在門外
+        touch_beacon()
+        deny("could not parse the hook payload")
+        return
+
+    touch_beacon()
+    respond(*decide(event, resolve_role()))
 
 
 if __name__ == "__main__":
