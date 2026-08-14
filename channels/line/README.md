@@ -5,6 +5,15 @@ agentport 的第三個 channel：LINE Messaging API。與 Slack/Discord plugin �
 access.json gate、role hook），差別在傳輸層 — LINE 沒有長連線 gateway，改由
 本 plugin 內嵌的 loopback HTTP webhook listener 接收事件。
 
+## Runtime
+
+Bun（`bun run server.ts`；TypeScript 直接跑，不編譯）。`bun.lock` 由
+**Bun 1.3.14** 產生，是文字格式所以 diff 看得懂。
+
+要動相依就用 Bun：`npm install` 會產生 `package-lock.json`，兩份 lockfile 並存
+等於沒有 lockfile——之後誰裝到哪一份取決於他手邊有什麼工具。CI 用
+`bun install --frozen-lockfile` 擋住 lockfile 與 package.json 不同步。
+
 ## 需求
 
 - LINE Official Account + Messaging API channel（secret + long-lived token）
