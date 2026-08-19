@@ -69,7 +69,15 @@ jobs:
           # 比對真實 token 的完整格式，不是只比前綴。
           # 只比前綴會把 'xoxb-REPLACE_ME' 與說明文字一起報成警報，
           # 而會誤報的檢查最後一定會被關掉。
-          if git grep -nIE 'xox[bp]-[0-9]{8,}-[0-9]{8,}-[A-Za-z0-9]{16,}|sk-ant-[A-Za-z0-9_-]{40,}|ghp_[A-Za-z0-9]{36}|AKIA[0-9A-Z]{16}' ; then
+          # EXAMPLE / REPLACE_ME 是「這顯然不是真的」的公認寫法，AKIAIOSFODNN7EXAMPLE
+          # 就是 AWS 自己文件裡的示範金鑰。這個豁免不是在放水：hooks/ 的 sanitizer
+          # 有測試，而秘密偵測器的測試必然得包含長得像秘密的字串——任何合法的
+          # AKIA+16 碼都會撞上上面那條規則。少了這個豁免，唯一的出路是把整個
+          # tests/ 排除掉，那才是真的破洞。
+          hits="$(git grep -nIE 'xox[bp]-[0-9]{8,}-[0-9]{8,}-[A-Za-z0-9]{16,}|sk-ant-[A-Za-z0-9_-]{40,}|ghp_[A-Za-z0-9]{36}|AKIA[0-9A-Z]{16}' || true)"
+          hits="$(printf '%s\n' "$hits" | grep -vE 'EXAMPLE|REPLACE_ME' || true)"
+          if [ -n "$hits" ]; then
+            printf '%s\n' "$hits"
             echo "::error::疑似真實憑證進入版控"; exit 1
           fi
           if git grep -nIE '\b(10|192\.168)\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\b|\b100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}\b' -- ':!*.lock' ; then
