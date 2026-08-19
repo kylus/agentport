@@ -36,10 +36,16 @@ curl -fsSL https://bun.sh/install | bash
 **Discord**（個人環境推薦——不需要 workspace 管理權，只要一個 Discord 帳號 + 一個自己的 server）：
 
 ```bash
-gh repo clone <your-fork>/claude-plugins-official ~/workspace/claude-plugins-official
+gh repo clone kylus/claude-plugins-official ~/workspace/claude-plugins-official
 cd ~/workspace/claude-plugins-official && git checkout feat/owner-role-hook
 cd external_plugins/discord && bun install --frozen-lockfile
 ```
+
+那是 `anthropics/claude-plugins-official` 的 fork，`feat/owner-role-hook` 分支多了一個
+patch：adapter 在把每則訊息交給 agent 之前，先把發話者是 owner 還是 contributor 原子
+寫入 `<topic>/.current-role`。**沒有這個 patch，role gate 讀不到角色，就會 fail closed
+把每個人都當 contributor**——連你自己都不能改記憶。上游沒有這個功能，所以這裡不能直接
+clone `anthropics/`。
 
 **Slack**（需要一個你能建 app 的 workspace）：
 
@@ -48,6 +54,9 @@ curl -fsSL https://downloads.slack-edge.com/slack-cli/install.sh | bash
 slack login           # browser 開起來授權，選 workspace
 slack auth list       # 確認登入成功
 
+# ⚠️ 這個 fork 目前沒有公開版本：把 jeremylongshore/claude-code-slack-channel
+#    fork 到自己名下，套上跟 Discord 那支同樣的 owner-role hook patch，再 clone 回來。
+#    只想試用的話，跳過 Slack、走上面的 Discord 就好——兩個頻道各自 opt-in。
 gh repo clone <your-fork>/claude-code-slack-channel ~/workspace/claude-code-slack-channel
 cd ~/workspace/claude-code-slack-channel && git checkout feat/owner-role-hook
 bun install --frozen-lockfile

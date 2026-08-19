@@ -79,14 +79,15 @@ elif [ -n "$SLACK_PLUGIN_REPO" ]; then
   echo "ok      Slack plugin installed at $SLACK_PLUGIN_DIR"
 else
   echo "info    Slack plugin not present at $SLACK_PLUGIN_DIR — fine for Discord-only hosts."
-  echo "        To auto-install: SLACK_PLUGIN_REPO=<your-fork>/claude-code-slack-channel bash deploy/install.sh"
+  echo "        No public fork exists — fork jeremylongshore/claude-code-slack-channel,"
+  echo "        apply the owner-role hook patch, then: SLACK_PLUGIN_REPO=<your-fork>/claude-code-slack-channel bash deploy/install.sh"
 fi
 
 if [ -f "$DISCORD_PLUGIN_DIR/server.ts" ]; then
   echo "ok      Discord plugin at $DISCORD_PLUGIN_DIR"
 else
   echo "info    Discord plugin not present at $DISCORD_PLUGIN_DIR — fine for Slack-only hosts."
-  echo "        Install: gh repo clone <your-fork>/claude-plugins-official ~/workspace/claude-plugins-official"
+  echo "        Install: gh repo clone kylus/claude-plugins-official ~/workspace/claude-plugins-official"
   echo "                 (branch feat/owner-role-hook; then bun install in external_plugins/discord)"
 fi
 
