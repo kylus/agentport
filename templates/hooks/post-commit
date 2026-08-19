@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Topic-agent auto-push hook. Triggers on every git commit (including
+# commits made by the bot's claude session). Pushes to origin if an
+# upstream branch is configured; otherwise no-op.
+#
+# Safe properties:
+# - Only pushes the current branch's HEAD (no --force, no --all)
+# - Silent if origin is unreachable (network blip, offline) — next commit
+#   will catch up
+# - If push fails for any reason, log to .git/post-commit.log so we can
+#   diagnose without spamming agent output
+
+set +e
+log_file="$(git rev-parse --git-dir)/post-commit.log"
+ts="$(date '+%Y-%m-%d %H:%M:%S')"
+
+# Skip if no upstream is set (first commit before `git push -u …`)
+if ! git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
+  echo "[$ts] no upstream set; skipping auto-push" >> "$log_file"
+  exit 0
+fi
+
+output=$(git push --quiet 2>&1)
+rc=$?
+if [ $rc -ne 0 ]; then
+  echo "[$ts] push failed (exit $rc): $output" >> "$log_file"
+else
+  echo "[$ts] push ok ($(git log -1 --format='%h %s'))" >> "$log_file"
+fi
+exit 0

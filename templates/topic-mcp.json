@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "slack": {
+      "command": "bun",
+      "args": ["run", "--cwd", "{{SLACK_PLUGIN_DIR}}", "server.ts"],
+      "env": {
+        "SLACK_STATE_DIR": "${TOPIC_DIR}/.slack-state",
+        "OWNER_SLACK_USER_ID": "${OWNER_SLACK_USER_ID}",
+        "SLACK_ROLE_HOOK_FILE": "${TOPIC_DIR}/.current-role"
+      }
+    },
+    "discord": {
+      "command": "bun",
+      "args": ["run", "--cwd", "{{DISCORD_PLUGIN_DIR}}", "start"],
+      "env": {
+        "DISCORD_STATE_DIR": "${TOPIC_DIR}/.discord-state",
+        "OWNER_DISCORD_USER_ID": "${OWNER_DISCORD_USER_ID}",
+        "DISCORD_ROLE_HOOK_FILE": "${TOPIC_DIR}/.current-role"
+      }
+    }
+  }
+}
