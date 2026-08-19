@@ -38,7 +38,11 @@ jobs:
         working-directory: channels/line
         run: bun install --frozen-lockfile
 
+      # 這一步的結果被刻意丟掉（`|| true`）——它是提示，不是關卡。正因為如此，
+      # 它更不該有能力擋住合併：2026-08-19 一次 run 卡在 apt install 二十幾分鐘，
+      # 而 lint 與測試早就綠了。shellcheck 本身跑完全部腳本不到三秒，慢的是取得它。
       - name: Shell scripts
+        timeout-minutes: 5
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
           # tools/ 直接在使用者主機上跑指令，語法或引號錯誤的後果比一般腳本嚴重
