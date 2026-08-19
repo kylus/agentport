@@ -37,6 +37,10 @@ tools/run-topic-herdr.sh ~/workspace/topic-<name> --provider claude|codex
 The launcher starts the herdr server if it is not running, creates a workspace
 rooted at the topic directory, and starts the agent in it.
 
+It is a front-end, not a second launcher: the claude argv comes from
+`tools/run-topic.sh --print-argv`, so an agent started here is configured
+exactly like one started by plain exec. See the README's "Launching a topic".
+
 **It refuses to start a second agent on a topic that already has one.** Two
 agents in one topic directory would race each other's git commits — approval
 writes to `memory/` and commits, so a duplicate is not merely wasteful.
@@ -44,9 +48,43 @@ writes to `memory/` and commits, so a duplicate is not merely wasteful.
 Under systemd:
 
 ```bash
-cp deploy/systemd/topic-agent-herdr@.service ~/.config/systemd/user/
+systemctl --user link "$PWD/deploy/systemd/topic-agent-herdr@.service"
 systemctl --user enable --now topic-agent-herdr@<topic>
 ```
+
+`link` rather than `cp` so edits to the unit in the repo are what actually runs
+— a copy silently goes stale. Stopping the unit closes the topic's whole
+workspace, not just its pane; closing the pane alone leaves an empty workspace
+behind and they accumulate one per restart.
+
+## The startup confirmation
+
+Topic agents subscribe to their channels with
+`--dangerously-load-development-channels`, and Claude Code raises an interactive
+confirmation for it at startup:
+
+```
+WARNING: Loading development channels
+❯ 1. I am using this for local development
+  2. Exit
+```
+
+Two things about answering it automatically, both learned by getting them wrong:
+
+**Send exactly one `1`, regardless of how many channels are enabled.** The CLI
+shows a single combined prompt (verified with a topic on Discord + LINE). A
+second `1` lands in the chat input, gets submitted as a user message, and the
+agent burns a turn asking what "1" means.
+
+**Send it only once the prompt is actually on screen, and do it synchronously.**
+`herdr agent start` returns as soon as the TUI is interactive — which it already
+is while sitting at this prompt, so `agent start` reports success on an agent
+that has connected to nothing. The launcher therefore waits for the prompt with
+`herdr pane wait-output` *after* the agent exists, then answers it, then checks
+that the agent left the `blocked` state. An earlier revision backgrounded that
+waiter and armed an EXIT trap to reap it — which killed the waiter the instant
+the script finished, leaving the agent parked at the prompt indefinitely with
+every channel unconnected.
 
 ## Verifying the installer
 
