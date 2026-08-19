@@ -64,24 +64,56 @@ This repo is deliberately narrow. It does not include:
 ## Layout
 
 ```
-tools/      provider runtime (Codex), provider switch, Discord provisioning,
-            plugin update lifecycle
-channels/   LINE channel as a stdio MCP server
-core/sync/  session distillation + repo file snapshot into memory
-skills/     propose / approve / read memory
-hooks/      the PreToolUse role gate that makes approval enforceable
-tests/      the gate's deny rules, run as a subprocess the way Claude Code
-            runs them
-deploy/     systemd units for both providers and the memory sync timer
-docs/       Codex app-server protocol notes, plugin update SOP
+tools/       the launcher (run-topic.sh) and its front-ends, topic scaffolding
+             and bootstrap, provider runtime (Codex), provider switch, channel
+             provisioning, plugin update lifecycle
+templates/   what a new topic is made of: persona, memory sections, hook
+             wiring, post-commit auto-push
+channels/    LINE channel as a stdio MCP server
+core/ingest/ pull one GitHub / GitLab / Drive / Slack item into sources/
+core/sync/   session distillation + repo file snapshot into memory
+skills/      read / propose / approve memory, ingest, meeting notes, support
+             thread triage
+hooks/       the PreToolUse role gate that makes approval enforceable, and the
+             Stop hook that keeps memory/ committed
+tests/       every deny rule, run as a subprocess the way Claude Code runs it
+deploy/      systemd units (herdr, tmux, Codex, memory sync) and the installer
+docs/        the product brief, setup, approval model, herdr, Codex app-server
+             protocol notes, plugin update SOP
 ```
+
+## Launching a topic
+
+`tools/run-topic.sh <topic>` is the single source of truth for how a topic agent
+starts. It runs in two stages: **prepare** — work out which channels are enabled
+from `bot.env`, materialize their tokens and access lists, regenerate
+`.mcp.json` to match, relink skills — and then **launch**.
+
+Every front-end shares the prepare stage:
+
+```bash
+tools/run-topic.sh <topic>                  # prepare, then exec claude
+tools/run-topic.sh <topic> --print-argv     # prepare, print the argv instead
+tools/run-topic-herdr.sh ~/workspace/topic-<topic>   # the same argv, inside herdr
+```
+
+That seam is load-bearing. A front-end that assembles its own command line
+drifts from this one, and the drift is silent: the herdr launcher's first
+revision started `claude` with no arguments at all, producing an agent that
+looked perfectly healthy and could not receive a single message. Front-ends ask
+`--print-argv` what to run; they do not decide it.
 
 ## Status
 
 Extracted from a private codebase and published as the author's own work. The
-provider-swap and LINE channel paths have run in a personal deployment; nothing
-here has been exercised by anyone else yet. Treat it as working code with a
-sample size of one.
+first extraction took the architecture and left the operational half behind —
+skills shipped without their SKILL.md and so never loaded, the launcher never
+came across at all — so a topic could be described by this repo but not run by
+it. That gap is closed: scaffolding, launching, supervising and gating a topic
+all live here now, and a live topic agent runs on it.
+
+Still a sample size of one. The provider-swap, LINE and Discord paths have run
+in a personal deployment; nothing here has been exercised by anyone else.
 
 ## Licence
 
