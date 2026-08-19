@@ -15,6 +15,24 @@ proposal. This is the piece that turns it into a control.
     Read / Grep / Glob are unrestricted for both — reads were never the
     problem.
 
+    Three further contributor allowances exist because the documented flow
+    cannot run without them, and each is pinned to one exact shape:
+
+        Bash   bash <…>/read-memory/dump.sh      (no arguments)
+        Bash   curl … chat.postMessage … "channel":"$OWNER_SLACK_USER_ID"
+        mcp__{slack,discord,line}__{reply,fetch_messages}
+
+    The last one is not a nicety. The matcher is `*`, so a tool that is not
+    listed is denied — and without `reply` on that list a contributor can ask
+    a question the agent is structurally unable to answer.
+
+    Deliberately NOT allowed, though an earlier shell version of this gate
+    allowed them: the ingest scripts (ingest-source is owner-only by its own
+    first rule, so the shell hook contradicted the skill it was gating), and
+    general read commands like `cat` / `git log` / `find` (Read, Grep and Glob
+    already cover reading, and a Bash read primitive only matters once there
+    is a network primitive to pair it with — which there now is).
+
 Two decisions worth understanding before you adapt this:
 
 **The role comes from the process environment, never from the command.**
@@ -76,6 +94,24 @@ PYTHON_RE = re.compile(r"^python(3(\.\d+)?)?$")
 # 放進任何一個工具參數裡就會被擋下，兩種角色都一樣。用途只有一個：
 # 從 agent 自己的工具迴圈裡證明這個 hook 真的在線上。
 CANARY = "AGENTPORT_GATE_CANARY"
+
+# 頻道工具：contributor 也必須能用。matcher 是 `*`，所以沒列進來的 mcp__
+# 工具一律擋掉——包括 reply。少了這一條，contributor 問一句話，agent 想回
+# 也回不了，整個 bot 從外面看就是壞的。
+#
+# 只開「回這個對話」與「讀這個對話」。像 fetch_user_dms 那種能跨對話撈東西
+# 的不在內：那是讀，但不是「讀他自己剛剛講的話」。
+CHANNEL_TOOL_RE = re.compile(
+    r"^mcp__(slack|discord|line)__(reply|fetch_messages)$")
+
+# owner-DM 通知：整個 contributor 白名單裡唯一能連外的東西，所以形狀限制到
+# 只剩一種。
+SLACK_POST_URL = "https://slack.com/api/chat.postMessage"
+CURL_BAD_FLAG_RE = re.compile(
+    r"(?:--url|-K\b|--config|@-|-T\s|--resolve|--connect-to|--unix-socket"
+    r"|-o\s|--output|-D\s|--dump-header|--write-out|-w\s)")
+CURL_DATA_RE = re.compile(
+    r"(?:^|\s)(?:-d|--data(?:-raw|-binary|-ascii|-urlencode)?)\b")
 
 
 def respond(decision: str | None, reason: str = "") -> None:
@@ -168,23 +204,12 @@ def draft_target(cwd: str, raw: str) -> str | None:
     return name if DRAFT_RE.match(name) else None
 
 
-def check_propose_command(cwd: str, command: str) -> str | None:
-    """回傳拒絕理由；None 表示這確實是那唯一一種合法呼叫。"""
-    if not topic_root(cwd):
-        return (f"not a topic directory: {cwd} has no pending/ + memory/. "
-                "Start the agent inside the topic directory.")
-    bad = sorted({c for c in CHAIN_CHARS if c in command})
-    if bad:
-        return ("command chaining is not allowed for contributors "
-                f"(found {' '.join(repr(c) for c in bad)}); "
-                "propose.py must be a single, unchained invocation")
-    if "$(" in command:
-        return "command substitution is not allowed for contributors"
+def check_propose_command(cwd: str, tokens: list[str]) -> str | None:
+    """回傳拒絕理由；None 表示這確實是那唯一一種合法呼叫。
 
-    try:
-        tokens = shlex.split(command)
-    except ValueError as exc:
-        return f"could not parse command ({exc}) — refusing on principle"
+    收到的是已經切好、而且已經通過串接與替換檢查的 token —— 那些檢查現在
+    住在 check_bash_command，因為它們對每一種允許的指令都一樣重要。
+    """
     if len(tokens) < 2:
         return "the only Bash command available to contributors is propose.py"
 
@@ -250,6 +275,103 @@ def check_propose_command(cwd: str, command: str) -> str | None:
     return None
 
 
+def check_dump_command(cwd: str, tokens: list[str]) -> str | None:
+    """read-memory 的唯讀 dump。
+
+    contributor 要寫得出像樣的提案，就得先知道記憶裡已經有什麼；read-memory
+    的 SKILL.md 也明講「一次 Bash 呼叫，不要逐檔讀」。dump.sh 不吃任何參數，
+    所以多帶的東西只可能是想做別的事——只准兩個 token。
+    """
+    if len(tokens) != 2:
+        return "dump.sh takes no arguments"
+    if os.path.basename(tokens[0]) != "bash":
+        return (f"contributors may only run dump.sh via bash, not "
+                f"{tokens[0]!r}")
+    script = tokens[1]
+    if os.path.basename(script) != "dump.sh" or ".." in script.split(os.sep):
+        return "the only bash script available to contributors is read-memory/dump.sh"
+    real = os.path.realpath(script if os.path.isabs(script)
+                            else os.path.join(cwd, script))
+    pinned = os.environ.get("AGENTPORT_DUMP_SCRIPT")
+    if pinned:
+        if real != os.path.realpath(pinned):
+            return f"{script} is not the pinned dump.sh"
+    elif os.path.basename(os.path.dirname(real)) != "read-memory":
+        return f"{script} does not resolve to the read-memory skill"
+    if not os.path.isfile(real):
+        return f"{script} does not exist"
+    return None
+
+
+def check_slack_notify_command(command: str, tokens: list[str]) -> str | None:
+    """propose-memory-update 第 7 步：把新提案 DM 給 owner。
+
+    這是 contributor 唯一能連外的指令，所以每一維都釘死：固定 URL、固定
+    收件人、剛好一個 -d、沒有任何能改寫目的地或把回應落地的旗標。
+
+    owner id 沒設就整條規則關閉。舊的 shell 版在這裡是拿空字串去比對，等於
+    OWNER_SLACK_USER_ID 一旦沒設，任何 channel 都過得了——把通知規則變成
+    了一條通用外送管道。
+    """
+    owner = (os.environ.get("OWNER_SLACK_USER_ID") or "").strip()
+    # REPLACE_ME is how every scaffolded bot.env spells "not filled in yet",
+    # and the launcher already treats it as "channel off". Accepting it here
+    # would leave the rule armed with a destination nobody owns.
+    if "REPLACE_ME" in owner:
+        owner = ""
+    if not owner:
+        return ("curl is only available for the owner-DM notification, and "
+                "OWNER_SLACK_USER_ID is not set — there is no allowed "
+                "destination")
+    urls = [t for t in tokens if t.startswith(("http://", "https://"))]
+    if urls != [SLACK_POST_URL]:
+        return f"contributors may only curl {SLACK_POST_URL}"
+    bad = CURL_BAD_FLAG_RE.search(command)
+    if bad:
+        return f"curl flag {bad.group(0).strip()!r} is not allowed here"
+    if len(CURL_DATA_RE.findall(command)) != 1:
+        return "the notification must carry exactly one -d body"
+    # shell 引號可能把 " 變成 \"，兩種寫法都要能過。
+    if not re.search(rf'\\?"channel\\?"\s*:\s*\\?"{re.escape(owner)}\\?"',
+                     command):
+        return "the notification must be addressed to OWNER_SLACK_USER_ID"
+    return None
+
+
+def check_bash_command(cwd: str, command: str) -> str | None:
+    """Bash 的三種合法形狀，先做共同檢查再分派。
+
+    順序是重點：串接必須在分派之前擋掉。`propose.py … ; rm -rf ~` 的第一個
+    token 看起來完全合法，先分派就等於只檢查了前半句。
+    """
+    if not topic_root(cwd):
+        return (f"not a topic directory: {cwd} has no pending/ + memory/. "
+                "Start the agent inside the topic directory.")
+    bad = sorted({c for c in CHAIN_CHARS if c in command})
+    if bad:
+        return ("command chaining is not allowed for contributors "
+                f"(found {' '.join(repr(c) for c in bad)}); "
+                "each allowed command must be a single, unchained invocation")
+    if "$(" in command:
+        return "command substitution is not allowed for contributors"
+    try:
+        tokens = shlex.split(command)
+    except ValueError as exc:
+        return f"could not parse command ({exc}) — refusing on principle"
+    if not tokens:
+        return "empty command"
+
+    head = os.path.basename(tokens[0])
+    if PYTHON_RE.match(head):
+        return check_propose_command(cwd, tokens)
+    if head == "bash":
+        return check_dump_command(cwd, tokens)
+    if head == "curl":
+        return check_slack_notify_command(command, tokens)
+    return ("contributors may only run propose.py, read-memory/dump.sh, or "
+            "the owner-DM notification curl")
+
+
 def decide(event: dict, role: str) -> tuple[str | None, str]:
     """The whole verdict, as a value. ("deny", reason) or (None, "").
 
@@ -279,8 +401,11 @@ def decide(event: dict, role: str) -> tuple[str | None, str]:
         return None, ""
 
     if tool == "Bash":
-        reason = check_propose_command(cwd, tool_input.get("command") or "")
+        reason = check_bash_command(cwd, tool_input.get("command") or "")
         return ("deny", reason) if reason else (None, "")
+
+    if CHANNEL_TOOL_RE.match(tool):
+        return None, ""
 
     return "deny", (f"{tool or 'this tool'} is not available to contributors; "
                     "the only write path is propose.py")
@@ -336,7 +461,7 @@ def wiring_report() -> list[str]:
     return lines
 
 
-def _scenarios(topic: str, propose: str):
+def _scenarios(topic: str, propose: str, dump: str):
     legal = (f"python3 {propose} --author U1 --section decisions "
              f"--draft pending/.draft.md --source https://example.com/a")
     ev = lambda tool, ti: {"tool_name": tool, "tool_input": ti, "cwd": topic}  # noqa: E731
@@ -357,6 +482,20 @@ def _scenarios(topic: str, propose: str):
         ("contributor may not chain", "contributor",
          ev("Bash", {"command": legal + " ; id"}), "deny"),
         ("contributor gets no other tool", "contributor", ev("WebFetch", {}), "deny"),
+        ("contributor may read memory", "contributor",
+         ev("Bash", {"command": f"bash {dump}"}), None),
+        ("contributor may not pass dump.sh arguments", "contributor",
+         ev("Bash", {"command": f"bash {dump} ../../etc/passwd"}), "deny"),
+        ("contributor may not run other bash", "contributor",
+         ev("Bash", {"command": "ls -la /"}), "deny"),
+        ("contributor may answer on its channel", "contributor",
+         ev("mcp__discord__reply", {"chat_id": "1", "text": "hi"}), None),
+        ("contributor may not read other people's DMs", "contributor",
+         ev("mcp__slack__fetch_user_dms", {"user": "U9"}), "deny"),
+        ("notification curl is closed when no owner is configured", "contributor",
+         ev("Bash", {"command": 'curl -s -X POST '
+                     'https://slack.com/api/chat.postMessage -d '
+                     '\'{"channel":"UOWNER","text":"x"}\''}), "deny"),
         ("canary is denied for owners too", "owner",
          ev("Bash", {"command": f"echo {CANARY}"}), "deny"),
     ]
@@ -387,16 +526,19 @@ def self_test() -> int:
         os.makedirs(os.path.join(topic, "memory"))
         skills = os.path.join(topic, ".claude", "skills")
         os.makedirs(skills)
-        real = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
-                            "skills", "propose-memory-update")
+        skills_root = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "skills")
         propose = ".claude/skills/propose-memory-update/propose.py"
-        if os.path.isdir(real):
-            os.symlink(real, os.path.join(skills, "propose-memory-update"))
-        else:
-            print(f"  ! cannot find the skills directory next to {__file__}; "
-                  "propose.py scenarios will be reported as failures")
-            ok = False
-        for name, role, event, want in _scenarios(topic, propose):
+        dump = ".claude/skills/read-memory/dump.sh"
+        for skill in ("propose-memory-update", "read-memory"):
+            real = os.path.join(skills_root, skill)
+            if os.path.isdir(real):
+                os.symlink(real, os.path.join(skills, skill))
+            else:
+                print(f"  ! cannot find {skill} next to {__file__}; "
+                      "its scenarios will be reported as failures")
+                ok = False
+        for name, role, event, want in _scenarios(topic, propose, dump):
             got, reason = decide(event, role)
             good = got == want
             ok = ok and good
