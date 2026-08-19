@@ -39,14 +39,27 @@ jobs:
         run: bun install --frozen-lockfile
 
       # 這一步的結果被刻意丟掉（`|| true`）——它是提示，不是關卡。正因為如此，
-      # 它更不該有能力擋住合併：2026-08-19 一次 run 卡在 apt install 二十幾分鐘，
-      # 而 lint 與測試早就綠了。shellcheck 本身跑完全部腳本不到三秒，慢的是取得它。
+      # 它更不該有能力擋住合併：2026-08-19 一次 run 卡在 apt 二十幾分鐘、下一次
+      # 直接撞到 timeout，而 lint 與測試兩次都早就綠了。
+      #
+      # shellcheck 跑完整個 tools/ 不到三秒；慢的從來是「取得它」。所以改成直接抓
+      # 官方 release 的靜態執行檔，版本與 sha256 都釘住——理由跟上面釘 ruff 版本
+      # 一樣，順便讓這一步不再依賴 apt 鏡像今天心情好不好。
+      # continue-on-error 是把既有的意圖寫明：這是提示，壞掉不該擋住合併。
       - name: Shell scripts
         timeout-minutes: 5
+        continue-on-error: true
+        env:
+          SHELLCHECK_VERSION: "0.10.0"
+          SHELLCHECK_SHA256: "6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87"
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          set -euo pipefail
+          url="https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          curl -fsSL --retry 3 --max-time 120 -o shellcheck.tar.xz "$url"
+          echo "${SHELLCHECK_SHA256}  shellcheck.tar.xz" | sha256sum -c -
+          tar -xJf shellcheck.tar.xz
           # tools/ 直接在使用者主機上跑指令，語法或引號錯誤的後果比一般腳本嚴重
-          shellcheck -S warning tools/*.sh || true
+          "./shellcheck-v${SHELLCHECK_VERSION}/shellcheck" -S warning tools/*.sh || true
 
       # 這個 repo 的歷史被改寫過一次，就是為了移除真實主機名與組織名。
       # 這一關防止它們被重新帶回來。
