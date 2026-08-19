@@ -1,0 +1,41 @@
+{
+  "_comment": [
+    "Written into a topic's .claude/settings.json by tools/create-topic.sh,",
+    "with {{SEED_DIR}} replaced by the absolute path of this repo.",
+    "",
+    "The PreToolUse matcher is '*' on purpose: role_gate.py is an allowlist,",
+    "and an allowlist that only runs on some tools is not an allowlist. With a",
+    "narrower matcher every MCP tool reaches the model ungated.",
+    "",
+    "Both hooks read the role from AGENTPORT_ROLE, or from the file named by",
+    "AGENTPORT_ROLE_FILE. The launcher exports the latter as <topic>/.current-role,",
+    "which is the same file the channel adapters rewrite before delivering each",
+    "inbound message. Unset means contributor — it fails closed."
+  ],
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 {{SEED_DIR}}/hooks/role_gate.py"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 {{SEED_DIR}}/hooks/memory_clean.py"
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "telegram@claude-plugins-official": false
+  }
+}

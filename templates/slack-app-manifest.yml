@@ -1,0 +1,88 @@
+# Slack App manifest template for a topic agent.
+# tools/create-topic.sh fills the {{placeholders}} and invokes
+# `slack apps create --manifest path:...` to provision the app.
+#
+# Refs: https://api.slack.com/reference/manifests
+display_information:
+  name: "{{BOT_DISPLAY_NAME}}"
+  description: "Topic expert agent for {{TOPIC_NAME}}. Tag me to get cited, source-backed answers."
+  background_color: "#1f2d3d"
+
+features:
+  bot_user:
+    display_name: "{{BOT_DISPLAY_NAME}}"
+    always_online: true
+  app_home:
+    # Without `messages_tab_enabled: true` + the read-only toggle set to false,
+    # Slack shows "Sending messages to this app has been turned off" in the
+    # bot's DM page — users physically cannot type. Enable so the bot's DM
+    # is a usable inbox.
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+
+oauth_config:
+  scopes:
+    # Single bot token does both: live-reply to @mentions AND ingest history
+    # from channels the bot is invited to. Cross-workspace search (search:read)
+    # would need a separate user token; we deliberately skip it to avoid extra
+    # UI in onboarding. To pull a channel's history, /invite @<bot> first.
+    bot:
+      - app_mentions:read     # receive @-mention events
+      - chat:write            # post the streaming reply
+      - reactions:write       # ack with an emoji while we think
+      - users:read            # resolve user_id → display name
+      # *:read are LIST scopes — without them conversations.list silently
+      # drops that conversation type from the response. *:history alone
+      # only lets the bot read messages by known channel ID; it can't
+      # discover what channels exist. Pair every *:history with the
+      # corresponding *:read so the agent can both find AND read each
+      # category. (Owner asked once "why can't bot see #agent-test?" —
+      # private channel + missing groups:read.)
+      - channels:read         # list public channels
+      - channels:history      # public-channel history
+      - groups:read           # list private channels the bot is in
+      - groups:history        # private-channel history (only where invited)
+      - im:read               # list DMs
+      - im:history            # DM history (only DMs to the bot)
+      - mpim:read             # list group DMs
+      - mpim:history          # group-DM history
+      - files:read            # ingest file content from threads
+      - chat:write.public     # post to channels the bot is in
+    # User scopes (xoxp- token) — OPT-IN: only the fork-only
+    # `fetch_user_dms` MCP tool uses these. The bot impersonates the
+    # owner to read their DM history with specific other users (gated
+    # by access.userDmAllowlist). Reinstall after enabling this section
+    # makes Slack prompt the operator for a SECOND consent screen
+    # ("user permissions") on top of the bot consent — that's the
+    # xoxp- token Slack returns.
+    #
+    # ⚠️ Security: the xoxp- token is the owner's full Slack identity
+    # (every channel + DM they can see). Don't enable unless the topic
+    # agent's threat model already trusts the host filesystem with the
+    # owner's bot tokens, and you've set userDmAllowlist tight.
+    user:
+      - im:history            # owner's DM history
+      - im:read               # list owner's open DMs
+      - groups:history        # owner's private-channel history
+      - groups:read           # list owner's private channels
+      - channels:history      # owner's public-channel history (broad-read)
+      - channels:read         # list owner's public channels (broad-read)
+      - mpim:history          # owner's group-DM history (broad-read)
+      - mpim:read             # list owner's group DMs (broad-read)
+      - users:read            # resolve user_id → display name in dumps
+
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_mention           # @bot in channel/group
+      - message.im            # DMs to the bot (every message in a DM IS implicitly to the bot)
+  interactivity:
+    # Block Kit interactive buttons (reply_with_choices MCP tool) route
+    # back through Socket Mode — no public request_url needed. Click
+    # events arrive as `interactive` payloads on the existing Socket
+    # Mode connection. Manifest just needs the toggle.
+    is_enabled: true
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false
