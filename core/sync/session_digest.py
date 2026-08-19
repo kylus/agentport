@@ -8,6 +8,22 @@ Which messages count as relevant comes from the topic's sync.json —
 case-insensitive pattern (see templates/sync.json). No keywords configured
 means this topic opted out of session digests.
 
+Keywords alone are not enough of a filter. They match text, and the same words
+turn up in work that has nothing to do with the topic — a session about the
+agent framework mentions the same hostnames as a session about the network it
+manages. On one real五-week window, 52% of the extracted payload came from an
+unrelated project and only 28% from the topic's actual subject. Everything
+extracted is read by an agent, so noise costs tokens on the way in and dilutes
+memory on the way out. Two more filters, both configurable under
+"session_digest" in sync.json:
+
+    "include_projects": ["network-mgmt"]     only these (substring match)
+    "exclude_projects": ["kylus-site"]       never these
+
+The topic's own session directory and subagent transcripts are always excluded,
+with no way to opt in. A topic that reads its own output back turns its own
+speculation into a cited source, and does it again every night.
+
 Everything written is passed through sanitize.mask_secrets first. Transcripts
 are where credentials get said out loud — "here is the passphrase, save it, I
 won't keep it" — and this writes into a git repo, where a leaked secret cannot
@@ -33,16 +49,44 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from sanitize import SANITIZER_VERSION, mask_secrets, residual_secret_lines
 
 
-def load_keywords(topic_dir: pathlib.Path) -> 're.Pattern | None':
+def load_digest_config(topic_dir: pathlib.Path) -> dict:
     config_file = topic_dir / 'sync.json'
     try:
         config = json.loads(config_file.read_text())
     except FileNotFoundError:
-        return None
+        return {}
     except json.JSONDecodeError as e:
         print(f'error: {config_file} is not valid JSON: {e}', file=sys.stderr)
         raise SystemExit(1)
-    fragments = config.get('session_digest', {}).get('keywords', [])
+    return config.get('session_digest', {}) or {}
+
+
+def project_filter(topic_dir: pathlib.Path, config: dict):
+    """Return a predicate: may this session-project directory be read?
+
+    Claude Code names a project directory after its cwd with slashes turned
+    into dashes, so the topic's own directory is derivable rather than
+    configurable — which is what makes the self-exclusion unconditional.
+    """
+    own = str(topic_dir).replace('/', '-')
+    include = [x for x in config.get('include_projects', []) if x]
+    exclude = [x for x in config.get('exclude_projects', []) if x]
+
+    def allowed(project_dir_name: str) -> bool:
+        if project_dir_name == own or project_dir_name == 'subagents':
+            return False
+        if any(x in project_dir_name for x in exclude):
+            return False
+        if include:
+            return any(x in project_dir_name for x in include)
+        return True
+
+    return allowed
+
+
+def load_keywords(topic_dir: pathlib.Path) -> 're.Pattern | None':
+    config = load_digest_config(topic_dir)
+    fragments = config.get('keywords', [])
     if not fragments:
         return None
     return re.compile('(?:' + '|'.join(fragments) + ')', re.IGNORECASE)
@@ -132,15 +176,23 @@ def main() -> int:
 
     # Discover session files modified after last_sync
     projects_dir = pathlib.Path.home() / '.claude' / 'projects'
+    allowed = project_filter(topic_dir, load_digest_config(topic_dir))
     candidates: list[tuple[datetime, pathlib.Path]] = []
+    skipped = 0
     for f in projects_dir.rglob('*.jsonl'):
         try:
             mtime = datetime.fromtimestamp(f.stat().st_mtime, tz=timezone.utc)
         except OSError:
             continue
-        if mtime > last_sync:
-            candidates.append((mtime, f))
+        if mtime <= last_sync:
+            continue
+        if not allowed(f.parent.name):
+            skipped += 1
+            continue
+        candidates.append((mtime, f))
     candidates.sort()
+    if skipped:
+        print(f'skipped {skipped} session file(s) outside this topic\'s scope')
 
     if not candidates:
         print('no sessions modified since last sync')
