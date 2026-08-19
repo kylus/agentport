@@ -55,16 +55,24 @@ git commit -m "sync: session digest $(date -u +%Y-%m-%d)" \
 
 echo "== committed digest: $DIGEST_REL =="
 
-# Notify the live topic agent via tmux send-keys — injects the ingest command
-# directly into the agent's TUI as if the owner typed it. No external tokens
-# needed; works as long as the topic's tmux server is running.
+# Notify the live topic agent by injecting the ingest command into its TUI as
+# if the owner had typed it. No external tokens needed.
 #
-# Fallback: if tmux server is not up (service stopped), write a pending notice
-# file instead. The topic's CLAUDE.md instructs the agent to check pending/ for
-# AUTO_SYNC_* files on each conversation start and process them automatically.
+# Which mechanism depends on how the topic was launched, so all of them are
+# tried in turn — a topic migrated from tmux to herdr must not silently stop
+# receiving digests:
+#   1. herdr  — `agent prompt` submits the text properly, rather than typing
+#               keystrokes at whatever happens to have focus
+#   2. tmux   — the older launcher, one server per topic (`tmux -L topic-<name>`)
+#   3. neither running: write a pending notice file. The topic's CLAUDE.md
+#      instructs the agent to check pending/ for AUTO_SYNC_* files at the start
+#      of each conversation and process them automatically.
 INGEST_CMD="ingest sources/sessions/$(basename "$DIGEST_REL") 並更新 memory section"
 
-if tmux -L "topic-${TOPIC_NAME}" has-session -t "topic-${TOPIC_NAME}" 2>/dev/null; then
+if command -v herdr >/dev/null 2>&1 && herdr agent get "$TOPIC_NAME" >/dev/null 2>&1; then
+  herdr agent prompt "$TOPIC_NAME" "$INGEST_CMD" >/dev/null
+  echo "== submitted ingest prompt to herdr agent ${TOPIC_NAME} =="
+elif tmux -L "topic-${TOPIC_NAME}" has-session -t "topic-${TOPIC_NAME}" 2>/dev/null; then
   # Give the agent a blank line first so it's not mid-reply, then send command.
   tmux -L "topic-${TOPIC_NAME}" send-keys -t "topic-${TOPIC_NAME}" "" Enter 2>/dev/null || true
   sleep 1

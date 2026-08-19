@@ -11,17 +11,38 @@
 [Unit]
 Description=agentport topic agent (%i) under herdr
 After=network-online.target
+Wants=network-online.target
+# The launcher will start a herdr server if none is running, but when one is
+# managed as a unit, ordering after it avoids two racing starts on boot.
+After=herdr-server.service
+# One topic, one supervisor. Without this a topic can end up running under both
+# the tmux unit and this one, with two agents committing into one git history.
+Conflicts=topic-agent@%i.service topic-agent-codex@%i.service
 
 [Service]
+# Type=oneshot + RemainAfterExit: the long-lived process lives in a herdr pane,
+# not in this unit's cgroup. systemd's job is to ask herdr to create the agent
+# and to ask it to close the workspace on stop.
 Type=oneshot
 RemainAfterExit=yes
-Environment=PATH=%h/.local/bin:%h/bin:/usr/local/bin:/usr/bin:/bin
+
+# systemd's user-service PATH is minimal and drops everything from ~/.bashrc.
+# ~/.bun/bin matters: the channel adapters run on Bun and run-topic.sh refuses
+# to launch without it.
+Environment=PATH=%h/.local/bin:%h/bin:%h/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=TOPIC_ROOT=%h/workspace
 Environment=PROVIDER=claude
+
 # The launcher is idempotent: if the agent is already up it reports and exits 0,
 # so a restart never produces two agents racing on one topic's git history.
 ExecStart=/bin/sh -c '%h/projects/agentport/tools/run-topic-herdr.sh "$TOPIC_ROOT/topic-%i" --provider "$PROVIDER"'
-ExecStop=/bin/sh -c 'herdr agent get %i >/dev/null 2>&1 && herdr pane close "$(herdr agent get %i | python3 -c "import json,sys;print((json.load(sys.stdin).get(\"result\") or {}).get(\"agent\",{}).get(\"pane_id\",\"\"))")" || true'
+ExecStop=/bin/sh -c '%h/projects/agentport/tools/run-topic-herdr.sh "$TOPIC_ROOT/topic-%i" --stop'
+
+# Bound stop time so a wedged herdr socket can't hang the unit indefinitely.
+TimeoutStopSec=30
+
+Restart=on-failure
+RestartSec=10
 
 [Install]
 WantedBy=default.target

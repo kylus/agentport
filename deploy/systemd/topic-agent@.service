@@ -1,0 +1,69 @@
+# Run one topic agent under tmux, supervised by systemd.
+#
+#   systemctl --user enable --now topic-agent@<topic>
+#
+# The alternative to topic-agent-herdr@, for hosts that would rather not run
+# herdr. Same launcher underneath (tools/run-topic.sh), same channels, same
+# memory — the difference is that a tmux pane tells you nothing about what the
+# agent inside it is doing, so "which agent is waiting on me" goes back to
+# being a question you answer by looking.
+[Unit]
+Description=agentport topic agent (%i) under tmux
+After=network-online.target
+Wants=network-online.target
+# One topic, one supervisor. Two agents in one topic directory would race each
+# other's git commits, and approval commits to memory/.
+Conflicts=topic-agent-herdr@%i.service topic-agent-codex@%i.service
+
+[Service]
+# Type=oneshot + RemainAfterExit: the long-lived process is delegated to tmux,
+# so the owner can attach for live debugging and the in-script send-keys
+# auto-confirm keeps working. systemd creates the session and tears it down.
+# The inner loop respawns claude if it crashes, which brings the channel
+# connection back without anyone noticing it went.
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=%h/projects/agentport
+
+# systemd's user-service PATH is minimal and drops everything from ~/.bashrc.
+# ~/.bun/bin matters: the channel adapters run on Bun and run-topic.sh refuses
+# to launch without it.
+Environment=PATH=%h/.local/bin:%h/bin:%h/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=TOPIC_ROOT=%h/workspace
+
+# A dedicated tmux server per topic (tmux -L <name>). Without -L, the first
+# topic's ExecStart creates a shared server and every later topic forks inside
+# that server's process tree — which tangles cgroup membership and makes
+# `systemctl stop` collateral-kill unrelated topics.
+#
+# trap '' INT: ignore a stray Ctrl-C in the attached pane (claude handles its
+# own INT). Do NOT ignore HUP. tmux kill-server delivers SIGHUP to pane
+# processes, and that is the only signal path that reaches this loop: tmux
+# moves each pane into its own transient tmux-spawn-*.scope OUTSIDE this
+# service's cgroup, so systemd's control-group kill on stop never sees it. A
+# HUP-ignoring loop survives every `systemctl stop`, respawns a tty-less claude
+# every 10s, and each respawn leaks orphan adapters — LINE port conflicts,
+# duplicate Discord gateway connections that ack messages and never reply.
+# Don't trap TERM either; systemd uses it for clean shutdown.
+ExecStart=/usr/bin/tmux -L topic-%i new-session -d -s topic-%i \
+  'cd %h/projects/agentport && trap "" INT && while true; do tools/run-topic.sh %i; echo "[topic-%i exited at $(date) — restarting in 10s]"; sleep 10; done'
+
+# Kill the whole server, not just the session: guarantees no orphan tmux server
+# survives the stop.
+ExecStop=/usr/bin/tmux -L topic-%i kill-server
+
+# Safety net for the tmux-spawn-*.scope escape above: reap the respawn loop and
+# any detached claude for THIS topic even if a pane process missed the HUP.
+# '-' prefix: pkill exits 1 when nothing matched, which is success here.
+ExecStopPost=-/usr/bin/pkill -f "run-topic.sh %i"
+ExecStopPost=-/usr/bin/pkill -f "workspace/topic-%i/.mcp.json"
+
+# Bound stop time so a broken supervisor can't hang the unit. 30s gives the TUI
+# room to flush memory edits and let the post-commit auto-push finish.
+TimeoutStopSec=30
+
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
