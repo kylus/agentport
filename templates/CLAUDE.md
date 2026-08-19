@@ -183,7 +183,7 @@ they'll error harmlessly if the channel isn't loaded). Discord events
 arrive as MCP notifications from the `discord` server:
 
 ```
-<channel source="discord" chat_id="123456789012345678" message_id="234567890123456789" user="alice" user_id="184695080709324800" role="owner|contributor">
+<channel source="discord" chat_id="123456789012345678" message_id="234567890123456789" user="alice" user_id="345678901234567890" role="owner|contributor">
 <text content>
 </channel>
 ```
