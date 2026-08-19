@@ -8,6 +8,14 @@ Which messages count as relevant comes from the topic's sync.json —
 case-insensitive pattern (see templates/sync.json). No keywords configured
 means this topic opted out of session digests.
 
+Everything written is passed through sanitize.mask_secrets first. Transcripts
+are where credentials get said out loud — "here is the passphrase, save it, I
+won't keep it" — and this writes into a git repo, where a leaked secret cannot
+be taken back without rewriting history. If anything still looks like a
+handed-over secret after masking, no digest is written at all: a partially
+cleaned digest committed automatically is worse than a sync that stopped and
+said why.
+
 Reads last_session_sync from ingest_state.json; updates it on success.
 No external dependencies — stdlib only.
 
@@ -20,6 +28,9 @@ import pathlib
 import re
 import sys
 from datetime import datetime, timezone
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from sanitize import SANITIZER_VERSION, mask_secrets, residual_secret_lines
 
 
 def load_keywords(topic_dir: pathlib.Path) -> 're.Pattern | None':
@@ -171,7 +182,25 @@ def main() -> int:
             lines.append(f'**{role}**: {text.strip()}\n\n---\n\n')
             total_hits += 1
 
-    digest_file.write_text(''.join(lines), encoding='utf-8')
+    body, redactions = mask_secrets(''.join(lines))
+
+    # Fail closed. Nothing is written and last_session_sync is left alone, so a
+    # re-run after the offending session is dealt with picks the same window up
+    # again rather than skipping past it.
+    leftover = residual_secret_lines(body)
+    if leftover:
+        print(f'error: {len(leftover)} value(s) still look like credentials after '
+              f'masking — refusing to write a digest', file=sys.stderr)
+        for lineno, why in leftover[:10]:
+            print(f'  line {lineno}: {why}', file=sys.stderr)
+        print('  (line numbers refer to the digest that was NOT written; the '
+              'content is deliberately not echoed here)', file=sys.stderr)
+        return 1
+
+    if redactions:
+        print(f'masked {redactions} secret(s) [{SANITIZER_VERSION}]')
+
+    digest_file.write_text(body, encoding='utf-8')
 
     state['processed'].append({
         'type': 'session_digest',
