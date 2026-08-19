@@ -115,6 +115,22 @@ all live here now, and a live topic agent runs on it.
 Still a sample size of one. The provider-swap, LINE and Discord paths have run
 in a personal deployment; nothing here has been exercised by anyone else.
 
+**What you need that is not in this repo.** The chat adapters are external, and
+both need a patch that upstream does not carry: before handing a message to the
+agent, the adapter writes whether the sender is owner or contributor into
+`<topic>/.current-role`. Without it the role gate has no role to read and fails
+closed on everyone, including you.
+
+- **Discord** — [`kylus/claude-plugins-official`](https://github.com/kylus/claude-plugins-official),
+  branch `feat/owner-role-hook`, a fork of Anthropic's. Public; clone it and go.
+- **Slack** — no public fork exists. Fork
+  [`jeremylongshore/claude-code-slack-channel`](https://github.com/jeremylongshore/claude-code-slack-channel)
+  and apply the same patch yourself.
+- **LINE** — ships here, in `channels/line/`. Nothing to clone.
+
+Channels are opt-in per topic, so Discord-only or LINE-only is a complete
+setup — start there rather than with Slack.
+
 ## Licence
 
 MIT — see [LICENSE](LICENSE).
