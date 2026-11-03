@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 # Scaffold a topic directory that the rest of agentport expects.
 #
-#   tools/create-topic.sh <topic-name> [target-dir]
+#   tools/create-topic.sh <topic-name> [target-dir] [--kind topic|assistant]
+#
+# --kind topic (default) is a topic expert bound to its memory. --kind
+# assistant is the owner's general assistant over Discord DM: a different
+# persona, AGENTPORT_KIND=assistant in bot.env (run-topic.sh then enforces the
+# owner-only guard, see docs/assistant-kind.md), and no auto-push hook —
+# pushing is something it must ask for.
 #
 # Produces (target-dir defaults to ~/workspace/topic-<name>):
 #
@@ -27,15 +33,33 @@ set -euo pipefail
 
 SEED_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-1}"; }
-[ $# -ge 1 ] || usage
-case "$1" in -h|--help) usage 0;; esac
+usage() { sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-1}"; }
 
-TOPIC="$1"
+# --kind is a flag that may appear anywhere; everything else keeps its old
+# positional meaning ($1 name, $2 target-dir). Parsing it positionally would
+# turn `create-topic.sh foo --kind assistant` into a directory named --kind.
+KIND=topic
+POS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help) usage 0;;
+    --kind) [ $# -ge 2 ] || usage; KIND="$2"; shift 2;;
+    --kind=*) KIND="${1#--kind=}"; shift;;
+    -*) echo "unknown option: $1" >&2; exit 2;;
+    *) POS+=("$1"); shift;;
+  esac
+done
+case "$KIND" in
+  topic|assistant) ;;
+  *) echo "--kind must be topic or assistant" >&2; exit 2;;
+esac
+{ [ "${#POS[@]}" -ge 1 ] && [ "${#POS[@]}" -le 2 ]; } || usage
+
+TOPIC="${POS[0]}"
 case "$TOPIC" in
   *[!a-z0-9-]*|"" ) echo "topic name must be lowercase letters, digits and dashes" >&2; exit 2;;
 esac
-TOPIC_DIR="${2:-$HOME/workspace/topic-$TOPIC}"
+TOPIC_DIR="${POS[1]:-$HOME/workspace/topic-$TOPIC}"
 
 mkdir -p "$TOPIC_DIR"
 cd "$TOPIC_DIR"
@@ -70,9 +94,26 @@ done
 
 # The persona. Without it the agent has no topic, no owner and no rules about
 # citing sources — it is a general assistant sitting in a topic directory.
-[ -f CLAUDE.md ] || render "$SEED_DIR/templates/CLAUDE.md" CLAUDE.md
+PERSONA="$SEED_DIR/templates/CLAUDE.md"
+[ "$KIND" = assistant ] && PERSONA="$SEED_DIR/templates/CLAUDE.assistant.md"
+[ -f CLAUDE.md ] || render "$PERSONA" CLAUDE.md
 
-if [ ! -f bot.env ]; then
+if [ ! -f bot.env ] && [ "$KIND" = assistant ]; then
+  cat > bot.env <<'EOF'
+# Channel credentials. Never commit this file.
+# This topic is the owner's assistant: run-topic.sh refuses to start it unless
+# Discord is the only channel and its access lists are the owner alone.
+AGENTPORT_KIND=assistant
+DISCORD_BOT_TOKEN=
+OWNER_DISCORD_USER_ID=
+
+# Optional: extra directories the session may work in, colon-separated.
+# Convenience scope, not a boundary — see docs/assistant-kind.md.
+ASSISTANT_ADD_DIRS=
+EOF
+  chmod 600 bot.env
+  echo "  created bot.env (0600) — fill it in before starting the agent"
+elif [ ! -f bot.env ]; then
   cat > bot.env <<'EOF'
 # Channel credentials. Never commit this file.
 # Discord: filled in by tools/provision-discord-app.sh
@@ -135,7 +176,10 @@ fi
 # Auto-push on every commit, including the ones the agent makes when approving
 # memory. Installed after git init because it lives inside .git/, which means
 # it is NOT carried by a clone — re-run this script on a fresh checkout.
-if [ -f "$SEED_DIR/templates/hooks/post-commit" ]; then
+#
+# Not for the assistant kind: its persona says pushing needs the owner's yes,
+# and a hook that pushes on every local commit would make that a fiction.
+if [ "$KIND" = topic ] && [ -f "$SEED_DIR/templates/hooks/post-commit" ]; then
   cp "$SEED_DIR/templates/hooks/post-commit" .git/hooks/post-commit
   chmod +x .git/hooks/post-commit
 fi
