@@ -1,0 +1,9 @@
+--add-dir
+$SEED
+--mcp-config
+$HOME/workspace/topic-demo/.mcp.json
+--strict-mcp-config
+--dangerously-load-development-channels
+server:discord
+--permission-mode
+acceptEdits

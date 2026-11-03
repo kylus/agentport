@@ -1,0 +1,14 @@
+{
+  "dmPolicy": "allowlist",
+  "allowFrom": [
+    "100000000000000002",
+    "100000000000000001"
+  ],
+  "groups": {
+    "555": {
+      "requireMention": false,
+      "allowFrom": []
+    }
+  },
+  "ackReaction": "\ud83d\udc40"
+}

@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "discord": {
+      "command": "bun",
+      "args": [
+        "run",
+        "--cwd",
+        "$HOME/discord-adapter",
+        "start"
+      ],
+      "env": {
+        "DISCORD_STATE_DIR": "$HOME/workspace/topic-demo/.discord-state",
+        "OWNER_DISCORD_USER_ID": "100000000000000001",
+        "DISCORD_ROLE_HOOK_FILE": "$HOME/workspace/topic-demo/.current-role"
+      }
+    }
+  }
+}

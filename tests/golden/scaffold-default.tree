@@ -1,0 +1,32 @@
+.agents/
+.agents/skills/
+.agents/skills/approve-proposal -> $SEED/skills/approve-proposal
+.agents/skills/ingest-source -> $SEED/skills/ingest-source
+.agents/skills/meeting-notes -> $SEED/skills/meeting-notes
+.agents/skills/propose-memory-update -> $SEED/skills/propose-memory-update
+.agents/skills/read-memory -> $SEED/skills/read-memory
+.agents/skills/support-thread -> $SEED/skills/support-thread
+.claude/
+.claude/settings.json 7905e3dd1c00c6ae8b74de7c905da50e3ce8eeb756fbfa73ba1af31ff3c12f83
+.claude/skills/
+.claude/skills/approve-proposal -> $SEED/skills/approve-proposal
+.claude/skills/ingest-source -> $SEED/skills/ingest-source
+.claude/skills/meeting-notes -> $SEED/skills/meeting-notes
+.claude/skills/propose-memory-update -> $SEED/skills/propose-memory-update
+.claude/skills/read-memory -> $SEED/skills/read-memory
+.claude/skills/support-thread -> $SEED/skills/support-thread
+.git/hooks/post-commit b11920d3e08bd4867a857f45ea54b30c80da23c5b32b75218b514f5b7e0e0687
+.gitignore 4341c2ba97fa3f90485fbef757cbeea30e0e706df443ffeb4423df217a8438a0
+CLAUDE.md 491b6d4625de229f6f3f58533f03bfbe1a2f579e8a2fad3ec0fe81b834a1b22f
+bot.env aab80961891d9871547eb258a1bc5bddd06cf37df3b349558972ddb4455ef36b
+memory/
+memory/background.md 178e862a3271b7d97e46d7c13afcdd5029c83cb3c056c5d265cdc0848f2c4512
+memory/commitments.md 6c3bff6e3bd3431e642810953336ea3b00a962a158914c24e211563232867b0b
+memory/current_understanding.md 5fbd7115d8ec8f22b5085b41906f240d92c8fbd4e90ea1a4e6d86a0415633c6e
+memory/decisions.md bfe6220929d72e4b53599684357d35bf6f0223cce440c945b5999f488706c7f9
+memory/open_questions.md 45bfa477c20c8596b18593967615d2907cffdb005a96da0bf66c5fb58f733e2a
+memory/people.md 1aa01413b0e84c635b8c1f5fc1c383ceb0ae38cef24d4ecd85dc04f40d192240
+pending/
+skills/
+sources/
+sync.json 8e9d8a641610e3c93b04da8062bb1b78abcff0b6b50838a507a66f2f9d3675ca
